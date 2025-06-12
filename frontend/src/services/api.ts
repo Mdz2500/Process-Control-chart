@@ -19,7 +19,7 @@ export interface PBCRequest {
 // In src/services/api.ts
 export const calculatePBC = async (request: PBCRequest): Promise<PBCAnalysis> => {
   try {
-    console.log('Sending PBC request:', request); // Debug log
+    console.log('Sending PBC request:', request);
     
     const response = await api.post('/api/calculate-pbc', {
       data: request.data.map(point => ({
@@ -27,23 +27,24 @@ export const calculatePBC = async (request: PBCRequest): Promise<PBCAnalysis> =>
         value: point.value,
         label: point.label
       })),
-      baseline_period: request.baselinePeriod || Math.min(20, request.data.length),
-      detection_rules: request.detectionRules || ['rule1', 'rule4']
+      baselinePeriod: request.baselinePeriod || Math.min(20, request.data.length),  // Use camelCase
+      detectionRules: request.detectionRules || ['rule1', 'rule4']  // Use camelCase
     });
     
-    console.log('PBC response:', response.data); // Debug log
+    console.log('PBC response:', response.data);
     return response.data;
     
   } catch (error: any) {
     console.error('PBC calculation error:', error);
     
-    // Provide more specific error messages
     if (error.response?.status === 400) {
       throw new Error(error.response.data.detail || 'Invalid data provided');
     } else if (error.response?.status === 500) {
       throw new Error('Server error during calculation. Please check your data format.');
+    } else if (error.code === 'ECONNREFUSED') {
+      throw new Error('Cannot connect to backend server. Please ensure the backend is running on port 8000.');
     } else {
-      throw new Error('Failed to calculate PBC. Please check your connection and data.');
+      throw new Error(`Failed to calculate PBC: ${error.message}`);
     }
   }
 };

@@ -49,14 +49,14 @@ const DataInput: React.FC<DataInputProps> = ({ onDataSubmit, loading }) => {
     setConfig(prev => ({ ...prev, [key]: value }));
   };
 
-  // Validation function for data points
+  // Updated validation function aligned with Vacanti's methodology
   const validateData = (data: DataPoint[]): string | null => {
     if (data.length < 3) {
       return "Minimum 3 data points required";
     }
     
     if (data.length < 6) {
-      return "Warning: Less than 6 data points may produce unreliable results";
+      return "Warning: Less than 6 data points may produce unreliable results. Vacanti recommends minimum 6 for meaningful analysis.";
     }
     
     // Check for valid values
@@ -76,26 +76,49 @@ const DataInput: React.FC<DataInputProps> = ({ onDataSubmit, loading }) => {
       }
     }
     
-    // Check for duplicate timestamps
-    const timestamps = data.map(p => p.timestamp.getTime());
-    const uniqueTimestamps = new Set(timestamps);
-    if (timestamps.length !== uniqueTimestamps.size) {
-      return "Duplicate timestamps detected. Each data point must have a unique timestamp.";
+    // Ensure chronological ordering (Vacanti's requirement #1)
+    const sortedData = [...data].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+    const wasReordered = data.some((point, index) => 
+      point.timestamp.getTime() !== sortedData[index].timestamp.getTime()
+    );
+    
+    if (wasReordered) {
+      return "Warning: Data was not in chronological order. Data will be automatically sorted to preserve temporal sequence as required by Vacanti's methodology.";
+    }
+    
+    // Check for logical comparability (Vacanti's requirement #2)
+    // Ensure successive values represent the same process
+    const values = data.map(p => p.value);
+    const range = Math.max(...values) - Math.min(...values);
+    const average = values.reduce((sum, val) => sum + val, 0) / values.length;
+    
+    if (range / average < 0.001) {
+      return "Warning: Very low variation detected. Moving ranges may not capture meaningful process variation as required for XmR charts.";
     }
     
     return null;
   };
 
   const handleSubmit = () => {
-    const validationError = validateData(data);
+    let processedData = [...data];
     
-    if (validationError) {
+    // Ensure chronological ordering as per Vacanti's requirements
+    processedData.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+    
+    const validationError = validateData(processedData);
+    
+    if (validationError && validationError.includes('Error')) {
       setError(validationError);
       return;
     }
     
-    if (data.length >= 3) {
-      onDataSubmit(data, config);
+    // Show warnings but allow processing
+    if (validationError && validationError.includes('Warning')) {
+      setError(validationError);
+    }
+    
+    if (processedData.length >= 3) {
+      onDataSubmit(processedData, config);
     }
   };
 
@@ -142,7 +165,7 @@ const DataInput: React.FC<DataInputProps> = ({ onDataSubmit, loading }) => {
               value={config.baselinePeriod}
               onChange={(e) => handleConfigChange('baselinePeriod', parseInt(e.target.value))}
               inputProps={{ min: 6, max: 50 }}
-              helperText="6-20 recommended"
+              helperText="6-20 recommended per Vacanti"
             />
           </Grid>
           
@@ -189,9 +212,21 @@ const DataInput: React.FC<DataInputProps> = ({ onDataSubmit, loading }) => {
         {data.length > 0 && (
           <Typography variant="body2" color="textSecondary" sx={{ mt: 2 }}>
             Data points loaded: {data.length} 
-            {data.length < 6 && ' (minimum 6 recommended for reliable analysis)'}
+            {data.length < 6 && ' (minimum 6 recommended for reliable analysis per Vacanti)'}
           </Typography>
         )}
+        
+        <Box sx={{ mt: 2, p: 2, bgcolor: 'grey.50', borderRadius: 1 }}>
+          <Typography variant="subtitle2" gutterBottom>
+            Vacanti's Requirements for XmR Charts:
+          </Typography>
+          <Typography variant="body2" component="ul" sx={{ pl: 2, mb: 0 }}>
+            <li><strong>Chronological ordering:</strong> Data arranged in time sequence</li>
+            <li><strong>Logical comparability:</strong> Successive values from same process</li>
+            <li><strong>Meaningful moving ranges:</strong> Differences capture process variation</li>
+            <li><strong>Duplicate timestamps allowed:</strong> Multiple items can complete on same day</li>
+          </Typography>
+        </Box>
       </Box>
     </Paper>
   );

@@ -11,6 +11,7 @@ import {
   Legend,
   ChartOptions,
 } from 'chart.js';
+import { Box, Typography } from '@mui/material';
 import { PBCAnalysis, Signal } from '../../types';
 import { format } from 'date-fns';
 
@@ -30,6 +31,40 @@ interface PBCChartProps {
   title?: string;
 }
 
+// Flow Metrics Insights component based on Vacanti's methodology
+const FlowMetricsInsights: React.FC<{ analysis: PBCAnalysis }> = ({ analysis }) => {
+  const context = (analysis as any).flowMetricsContext;
+  
+  if (!context) return null;
+  
+  return (
+    <Box sx={{ mt: 3, p: 2, bgcolor: 'info.light', borderRadius: 1 }}>
+      <Typography variant="h6" gutterBottom>
+        Flow Metrics Analysis (Vacanti Methodology)
+      </Typography>
+      
+      <Typography variant="body2" paragraph>
+        <strong>Metric Type:</strong> {context.metricType.replace('_', ' ').toUpperCase()}
+      </Typography>
+      
+      <Typography variant="body2" paragraph>
+        {context.analysisGuidance.interpretation}
+      </Typography>
+      
+      {context.vacanti_insights && (
+        <Box sx={{ mt: 2 }}>
+          <Typography variant="subtitle2">
+            Predictability Assessment: {context.vacanti_insights.assessment}
+          </Typography>
+          <Typography variant="body2">
+            {context.vacanti_insights.recommendation}
+          </Typography>
+        </Box>
+      )}
+    </Box>
+  );
+};
+
 const PBCChart: React.FC<PBCChartProps> = ({ 
   analysis, 
   showSigmaLines = false,
@@ -37,14 +72,14 @@ const PBCChart: React.FC<PBCChartProps> = ({
 }) => {
   const { xChart, mrChart, signals } = analysis;
 
-  // Create signal point colors based on detection rules
+  // Create signal point colors based on detection rules from the document
   const getPointColors = (dataLength: number, signals: Signal[]) => {
     const colors = new Array(dataLength).fill('#2196F3');
     
     signals.forEach(signal => {
       signal.dataPoints.forEach(pointIndex => {
         if (pointIndex < colors.length) {
-          // Color coding based on detection rule severity
+          // Color coding based on detection rule severity as per Vacanti's methodology
           colors[pointIndex] = signal.severity === 'high' ? '#f44336' : 
                              signal.severity === 'moderate' ? '#ff9800' : '#ff5722';
         }
@@ -54,7 +89,7 @@ const PBCChart: React.FC<PBCChartProps> = ({
     return colors;
   };
 
-  // X Chart (Individual Values Chart) configuration
+  // X Chart (Individual Values Chart) configuration implementing Shewhart's formulas
   const xChartData = {
     labels: xChart.timestamps.map(ts => format(new Date(ts), 'MM/dd/yyyy')),
     datasets: [
@@ -99,7 +134,7 @@ const PBCChart: React.FC<PBCChartProps> = ({
     ]
   };
 
-  // Add sigma lines if requested (for enhanced signal detection)
+  // Add sigma lines if requested (for Western Electric Zone Tests)
   if (showSigmaLines && xChart.sigmaLines) {
     xChartData.datasets.push(
       {
@@ -197,7 +232,7 @@ const PBCChart: React.FC<PBCChartProps> = ({
         intersect: false,
         callbacks: {
           afterLabel: function(context) {
-            // Add signal information to tooltips
+            // Add signal information to tooltips based on detection rules
             const pointIndex = context.dataIndex;
             const relevantSignals = signals.filter(signal => 
               signal.dataPoints.includes(pointIndex)
@@ -237,7 +272,7 @@ const PBCChart: React.FC<PBCChartProps> = ({
   };
 
   return (
-    <div style={{ width: '100%', height: '800px' }}>
+    <div style={{ width: '100%', height: '900px' }}>
       <h3 style={{ textAlign: 'center', marginBottom: '20px' }}>{title}</h3>
       
       {/* X Chart (Individual Values) */}
@@ -251,7 +286,7 @@ const PBCChart: React.FC<PBCChartProps> = ({
       </div>
       
       {/* mR Chart (Moving Range) */}
-      <div style={{ height: '300px' }}>
+      <div style={{ height: '300px', marginBottom: '20px' }}>
         <h4 style={{ textAlign: 'center', marginBottom: '10px' }}>
           Moving Range Chart (mR Chart)
         </h4>
@@ -260,14 +295,34 @@ const PBCChart: React.FC<PBCChartProps> = ({
         </div>
       </div>
 
-      {/* Signal Summary */}
+      {/* Flow Metrics Insights Component */}
+      <FlowMetricsInsights analysis={analysis} />
+
+      {/* Signal Summary based on Vacanti's methodology */}
       {signals.length > 0 && (
-        <div style={{ marginTop: '20px', padding: '10px', backgroundColor: '#f5f5f5', borderRadius: '4px' }}>
-          <h4>Detected Signals: {signals.length}</h4>
-          <p style={{ fontSize: '12px', color: '#666' }}>
-            Red points indicate high severity signals (Rule 1: Points outside Natural Process Limits).
-            Orange points indicate moderate severity signals (Rules 2-3: Pattern-based detection).
-            Light red points indicate low severity signals (Rule 4: Sustained shifts).
+        <div style={{ marginTop: '20px', padding: '15px', backgroundColor: '#f5f5f5', borderRadius: '8px' }}>
+          <h4>Process Behaviour Analysis: {signals.length} Signal(s) Detected</h4>
+          <p style={{ fontSize: '14px', color: '#666', marginBottom: '10px' }}>
+            <strong>Signal Detection Rules (Western Electric Zone Tests):</strong>
+          </p>
+          <ul style={{ fontSize: '12px', color: '#666', margin: '0', paddingLeft: '20px' }}>
+            <li><strong>Red points:</strong> Rule 1 - Points outside Natural Process Limits (high severity)</li>
+            <li><strong>Orange points:</strong> Rules 2-3 - Pattern-based detection (moderate severity)</li>
+            <li><strong>Light red points:</strong> Rule 4 - Sustained shifts (low severity)</li>
+          </ul>
+          <p style={{ fontSize: '12px', color: '#666', marginTop: '10px' }}>
+            Signals indicate exceptional variation requiring investigation, while points within limits represent routine variation.
+          </p>
+        </div>
+      )}
+
+      {/* Predictability Assessment */}
+      {signals.length === 0 && (
+        <div style={{ marginTop: '20px', padding: '15px', backgroundColor: '#e8f5e8', borderRadius: '8px' }}>
+          <h4 style={{ color: '#2e7d32' }}>Process Operating Predictably</h4>
+          <p style={{ fontSize: '14px', color: '#2e7d32', margin: '0' }}>
+            No signals detected. Your process exhibits only routine variation within Natural Process Limits, 
+            indicating predictable performance suitable for forecasting as described in Vacanti's methodology.
           </p>
         </div>
       )}

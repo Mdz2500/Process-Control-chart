@@ -51,8 +51,11 @@ function App() {
         throw new Error('Minimum 3 data points required for PBC calculation');
       }
 
+      // Ensure chronological ordering (Vacanti's requirement)
+      const sortedData = [...data].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+
       // Validate each data point
-      data.forEach((point, index) => {
+      sortedData.forEach((point, index) => {
         if (!point.timestamp || isNaN(point.timestamp.getTime())) {
           throw new Error(`Invalid timestamp at data point ${index + 1}`);
         }
@@ -64,17 +67,13 @@ function App() {
         }
       });
 
-      // Check for duplicate timestamps
-      const timestamps = data.map(p => p.timestamp.getTime());
-      const uniqueTimestamps = new Set(timestamps);
-      if (timestamps.length !== uniqueTimestamps.size) {
-        throw new Error('Duplicate timestamps detected. Each data point must have a unique timestamp.');
-      }
+      // Remove the duplicate timestamp check - this is allowed per Vacanti's methodology
+      // Multiple work items can complete on the same day in real flow metrics
 
       console.log('Data validation passed, calling API...'); // Debug log
       
       const result = await calculatePBC({
-        data,
+        data: sortedData, // Use chronologically sorted data
         baselinePeriod: chartConfig.baselinePeriod,
         detectionRules: chartConfig.detectionRules
       });
@@ -148,7 +147,7 @@ function App() {
             Create XmR charts to distinguish between routine variation (noise) and exceptional variation (signal)
           </Typography>
           <Typography variant="body2" color="textSecondary" align="center" sx={{ mt: 2 }}>
-            Based on the methodology from "Actionable Agile Metrics for Predictability Volume II" by Daniel S. Vacanti
+            Based on Vacanti's methodology: "Data have no meaning apart from their context"
           </Typography>
         </Box>
 
@@ -158,7 +157,7 @@ function App() {
           <Box display="flex" flexDirection="column" alignItems="center" my={4}>
             <CircularProgress size={60} />
             <Typography variant="body2" sx={{ mt: 2 }}>
-              Calculating Process Behaviour Chart...
+              Calculating Process Behaviour Chart using Vacanti's XmR methodology...
             </Typography>
           </Box>
         )}
@@ -197,12 +196,15 @@ function App() {
                 Detection Rules: {config.detectionRules.join(', ').toUpperCase()} | 
                 Signals Detected: {analysis.signals.length}
               </Typography>
+              <Typography variant="body2" color="textSecondary" sx={{ mt: 1 }}>
+                Following Vacanti's principle: Chronologically ordered data preserving temporal context
+              </Typography>
             </Box>
             
             <PBCChart 
               analysis={analysis} 
               showSigmaLines={config.showSigmaLines}
-              title="Process Behaviour Chart (XmR)"
+              title="Process Behaviour Chart (XmR) - Vacanti Methodology"
             />
             
             <SignalDetector signals={analysis.signals} />
@@ -212,8 +214,8 @@ function App() {
                 <Typography variant="subtitle2" gutterBottom>
                   Process Operating Predictably
                 </Typography>
-                No signals detected. Your process appears to be operating with routine variation only, 
-                indicating predictable performance within natural process limits.
+                No signals detected. Your process exhibits only routine variation within Natural Process Limits, 
+                indicating predictable performance suitable for forecasting as described in Vacanti's methodology.
               </Alert>
             )}
           </>
@@ -226,7 +228,10 @@ function App() {
             </Typography>
             <Typography variant="body1" color="textSecondary">
               Enter your time series data above and click "Generate PBC" to create your Process Behaviour Chart.
-              Minimum 6 data points recommended for meaningful analysis.
+              Minimum 6 data points recommended for meaningful analysis per Vacanti's guidance.
+            </Typography>
+            <Typography variant="body2" color="textSecondary" sx={{ mt: 2 }}>
+              <strong>Note:</strong> Duplicate timestamps are allowed - multiple work items can complete on the same day.
             </Typography>
           </Box>
         )}

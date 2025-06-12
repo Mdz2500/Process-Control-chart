@@ -1,9 +1,10 @@
 from fastapi import APIRouter, HTTPException
 from typing import List
 import logging
-from app.models.data_models import PBCRequest, PBCResponse, DataPoint
+from app.models.data_models import PBCRequest, PBCResponse, DataPoint, Signal, ProcessLimits  # Import all needed classes
 from app.services.pbc_calculator import PBCCalculator
 from app.services.signal_detector import SignalDetector
+
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -78,10 +79,10 @@ async def calculate_pbc(request: PBCRequest):
             limits = calculator.calculate_natural_process_limits(baseline_data)
             logger.info(f"Calculated limits successfully:")
             logger.info(f"  Average: {limits.average:.4f}")
-            logger.info(f"  Upper Limit: {limits.upperLimit:.4f}")  # Use camelCase field name
-            logger.info(f"  Lower Limit: {limits.lowerLimit:.4f}")  # Use camelCase field name
-            logger.info(f"  Average Moving Range: {limits.averageMovingRange:.4f}")  # Use camelCase field name
-            logger.info(f"  Upper Range Limit: {limits.upperRangeLimit:.4f}")  # Use camelCase field name
+            logger.info(f"  Upper Limit: {limits.upperLimit:.4f}")
+            logger.info(f"  Lower Limit: {limits.lowerLimit:.4f}")
+            logger.info(f"  Average Moving Range: {limits.averageMovingRange:.4f}")
+            logger.info(f"  Upper Range Limit: {limits.upperRangeLimit:.4f}")
         except Exception as calc_error:
             logger.error(f"Error calculating limits: {str(calc_error)}")
             raise HTTPException(
@@ -107,7 +108,7 @@ async def calculate_pbc(request: PBCRequest):
             signals = detector.detect_all_signals(values, limits)
             logger.info(f"Detected {len(signals)} signals")
             for i, signal in enumerate(signals):
-                logger.info(f"  Signal {i + 1}: {signal.type} at points {signal.dataPoints} - {signal.description}")  # Use camelCase field name
+                logger.info(f"  Signal {i + 1}: {signal.type} at points {signal.dataPoints} - {signal.description}")
         except Exception as signal_error:
             logger.error(f"Error detecting signals: {str(signal_error)}")
             signals = []
@@ -121,8 +122,8 @@ async def calculate_pbc(request: PBCRequest):
             "timestamps": timestamps,
             "values": values,
             "average": limits.average,
-            "upperLimit": limits.upperLimit,  # Use camelCase field name
-            "lowerLimit": limits.lowerLimit,  # Use camelCase field name
+            "upperLimit": limits.upperLimit,
+            "lowerLimit": limits.lowerLimit,
             "sigmaLines": {
                 "oneSigmaUpper": sigma_lines.get("oneSigmaUpper", sigma_lines.get("one_sigma_upper", limits.average)),
                 "oneSigmaLower": sigma_lines.get("oneSigmaLower", sigma_lines.get("one_sigma_lower", limits.average)),
@@ -132,10 +133,10 @@ async def calculate_pbc(request: PBCRequest):
         }
         
         mr_chart_data = {
-            "timestamps": timestamps[1:],  # One less timestamp for moving ranges
+            "timestamps": timestamps[1:],
             "values": moving_ranges,
-            "average": limits.averageMovingRange,  # Use camelCase field name
-            "upperLimit": limits.upperRangeLimit  # Use camelCase field name
+            "average": limits.averageMovingRange,
+            "upperLimit": limits.upperRangeLimit
         }
         
         # Create response with proper structure
@@ -145,7 +146,7 @@ async def calculate_pbc(request: PBCRequest):
             "signals": [
                 {
                     "type": signal.type,
-                    "dataPoints": signal.dataPoints,  # Use camelCase field name
+                    "dataPoints": signal.dataPoints,
                     "description": signal.description,
                     "severity": signal.severity
                 }
@@ -153,12 +154,12 @@ async def calculate_pbc(request: PBCRequest):
             ],
             "limits": {
                 "average": limits.average,
-                "upperLimit": limits.upperLimit,          # Use camelCase field name
-                "lowerLimit": limits.lowerLimit,          # Use camelCase field name
-                "averageMovingRange": limits.averageMovingRange,  # Use camelCase field name
-                "upperRangeLimit": limits.upperRangeLimit         # Use camelCase field name
+                "upperLimit": limits.upperLimit,
+                "lowerLimit": limits.lowerLimit,
+                "averageMovingRange": limits.averageMovingRange,
+                "upperRangeLimit": limits.upperRangeLimit
             },
-            "baselinePeriod": baseline_period  # camelCase for frontend
+            "baselinePeriod": baseline_period
         }
         
         logger.info("PBC calculation completed successfully")
@@ -183,6 +184,56 @@ async def calculate_pbc(request: PBCRequest):
             status_code=500, 
             detail=f"Internal calculation error: {str(e)}"
         )
+
+def get_flow_metrics_guidance(metric_type: str, signals: List[Signal]) -> dict:
+    """Provide guidance based on Vacanti's flow metrics methodology"""
+    
+    guidance = {
+        "cycle_time": {
+            "interpretation": "Cycle Time measures the elapsed time from when work starts until it's completed",
+            "signals_meaning": "Signals indicate changes in your delivery process that require investigation",
+            "action_items": [
+                "Investigate assignable causes for points outside Natural Process Limits",
+                "Look for process changes during signal periods",
+                "Consider workflow bottlenecks or capacity changes"
+            ]
+        },
+        "throughput": {
+            "interpretation": "Throughput measures the number of items completed per time period",
+            "signals_meaning": "Signals indicate changes in your team's delivery capacity",
+            "action_items": [
+                "Investigate capacity changes during signal periods",
+                "Look for team composition or process changes",
+                "Consider external factors affecting delivery rate"
+            ]
+        }
+    }
+    
+    return guidance.get(metric_type, guidance["cycle_time"])
+
+def generate_vacanti_insights(values: List[float], limits: ProcessLimits, signals: List[Signal]) -> dict:
+    """Generate insights based on Vacanti's predictability framework"""
+    
+    total_points = len(values)
+    signal_points = len(set().union(*[signal.dataPoints for signal in signals]))
+    predictability_ratio = 1 - (signal_points / total_points)
+    
+    if predictability_ratio >= 0.85:
+        predictability_assessment = "Highly Predictable"
+        recommendation = "Your process exhibits routine variation. Focus on continuous improvement."
+    elif predictability_ratio >= 0.70:
+        predictability_assessment = "Moderately Predictable" 
+        recommendation = "Some exceptional variation detected. Investigate assignable causes."
+    else:
+        predictability_assessment = "Unpredictable"
+        recommendation = "Significant exceptional variation. Process improvement needed before forecasting."
+    
+    return {
+        "predictability_ratio": round(predictability_ratio, 3),
+        "assessment": predictability_assessment,
+        "recommendation": recommendation,
+        "baseline_period_guidance": f"Using {len(values)} data points meets Vacanti's minimum 6-point requirement"
+    }
 
 @router.get("/health")
 async def health_check():
@@ -210,7 +261,6 @@ async def health_check():
 async def test_calculation():
     """Debug endpoint to test PBC calculation with sample data"""
     try:
-        # Sample data based on the document's methodology
         sample_data = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]
         
         calculator = PBCCalculator()
