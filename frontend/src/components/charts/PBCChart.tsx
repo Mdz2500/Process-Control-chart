@@ -11,7 +11,7 @@ import {
   Legend,
   ChartOptions,
 } from 'chart.js';
-import { Box, Typography } from '@mui/material';
+import { Box, Typography, Grid, Paper, Divider } from '@mui/material';
 import { PBCAnalysis, Signal } from '../../types';
 import { format } from 'date-fns';
 
@@ -29,6 +29,8 @@ interface PBCChartProps {
   analysis: PBCAnalysis;
   showSigmaLines: boolean;
   title?: string;
+  // Enhanced props for Nave integration
+  originalData?: any[];
 }
 
 // Flow Metrics Insights component based on Vacanti's methodology
@@ -38,7 +40,7 @@ const FlowMetricsInsights: React.FC<{ analysis: PBCAnalysis }> = ({ analysis }) 
   if (!context) return null;
   
   return (
-    <Box sx={{ mt: 3, p: 2, bgcolor: 'info.light', borderRadius: 1 }}>
+    <Paper elevation={2} sx={{ mt: 3, p: 3 }}>
       <Typography variant="h6" gutterBottom>
         Flow Metrics Analysis (Vacanti Methodology)
       </Typography>
@@ -61,14 +63,15 @@ const FlowMetricsInsights: React.FC<{ analysis: PBCAnalysis }> = ({ analysis }) 
           </Typography>
         </Box>
       )}
-    </Box>
+    </Paper>
   );
 };
 
 const PBCChart: React.FC<PBCChartProps> = ({ 
   analysis, 
   showSigmaLines = false,
-  title = "Process Behaviour Chart (XmR)" 
+  title = "Process Behaviour Chart (XmR)",
+  originalData = []
 }) => {
   const { xChart, mrChart, signals } = analysis;
 
@@ -88,6 +91,77 @@ const PBCChart: React.FC<PBCChartProps> = ({
     
     return colors;
   };
+
+  // Enhanced tooltip configuration for both X and mR charts
+  const createTooltipCallbacks = (chartType: 'x' | 'mr') => ({
+    title: function(context: any) {
+      const pointIndex = context[0].dataIndex;
+      const timestamp = context[0].label;
+      
+      // For mR chart, we need to adjust the index since it has one less data point
+      const dataIndex = chartType === 'mr' ? pointIndex + 1 : pointIndex;
+      
+      if (originalData && originalData[dataIndex]) {
+        const task = originalData[dataIndex];
+        return `${timestamp} - ${task.taskKey || 'Unknown Task'}`;
+      }
+      
+      return timestamp || '';
+    },
+    label: function(context: any) {
+      const pointIndex = context.dataIndex;
+      const value = context.parsed.y;
+      const datasetLabel = context.dataset.label;
+      
+      // For mR chart, adjust the index
+      const dataIndex = chartType === 'mr' ? pointIndex + 1 : pointIndex;
+      
+      // Enhanced label based on chart type
+      if (datasetLabel === 'Individual Values' || datasetLabel === 'Moving Range') {
+        if (originalData && originalData[dataIndex]) {
+          const task = originalData[dataIndex];
+          
+          if (chartType === 'x') {
+            return [
+              `${datasetLabel}: ${value.toFixed(2)} days`,
+              `Task: ${task.taskKey || 'Unknown'}`,
+              `Name: ${task.taskName || 'Unnamed Task'}`,
+              `Cycle Time: ${value.toFixed(1)} days`
+            ];
+          } else {
+            // For mR chart, show the moving range between current and previous task
+            const prevTask = originalData[dataIndex - 1];
+            return [
+              `${datasetLabel}: ${value.toFixed(2)} days`,
+              `Between: ${prevTask?.taskKey || 'Unknown'} → ${task.taskKey || 'Unknown'}`,
+              `Current Task: ${task.taskName || 'Unnamed Task'}`,
+              `Range: ${value.toFixed(2)} days difference`
+            ];
+          }
+        } else {
+          return `${datasetLabel}: ${value.toFixed(2)} days`;
+        }
+      }
+      
+      return `${datasetLabel}: ${value.toFixed(2)}`;
+    },
+    afterLabel: function(context: any) {
+      // Add signal information to tooltips based on detection rules
+      const pointIndex = context.dataIndex;
+      const dataIndex = chartType === 'mr' ? pointIndex + 1 : pointIndex;
+      
+      const relevantSignals = signals.filter(signal => 
+        signal.dataPoints.includes(dataIndex)
+      );
+      
+      if (relevantSignals.length > 0) {
+        return relevantSignals.map(signal => 
+          `🚨 Signal: ${signal.type.toUpperCase()} - ${signal.description}`
+        );
+      }
+      return [];
+    }
+  });
 
   // X Chart (Individual Values Chart) configuration implementing Shewhart's formulas
   const xChartData = {
@@ -176,7 +250,7 @@ const PBCChart: React.FC<PBCChartProps> = ({
     );
   }
 
-  // mR Chart (Moving Range Chart) configuration
+  // mR Chart (Moving Range Chart) configuration with enhanced tooltips
   const mrChartData = {
     labels: mrChart.timestamps.map(ts => format(new Date(ts), 'MM/dd/yyyy')),
     datasets: [
@@ -186,7 +260,7 @@ const PBCChart: React.FC<PBCChartProps> = ({
         borderColor: '#673AB7',
         backgroundColor: 'transparent',
         pointBackgroundColor: '#673AB7',
-        pointRadius: 3,
+        pointRadius: 4, // Increased for better visibility
         tension: 0,
         fill: false
       },
@@ -211,7 +285,7 @@ const PBCChart: React.FC<PBCChartProps> = ({
     ]
   };
 
-  const chartOptions: ChartOptions<'line'> = {
+  const xChartOptions: ChartOptions<'line'> = {
     responsive: true,
     maintainAspectRatio: false,
     plugins: {
@@ -219,7 +293,6 @@ const PBCChart: React.FC<PBCChartProps> = ({
         position: 'top' as const,
         labels: {
           filter: function(item, chart) {
-            // Hide sigma lines from legend if not shown
             if (!showSigmaLines && item.text?.includes('Sigma')) {
               return false;
             }
@@ -230,22 +303,7 @@ const PBCChart: React.FC<PBCChartProps> = ({
       tooltip: {
         mode: 'index',
         intersect: false,
-        callbacks: {
-          afterLabel: function(context) {
-            // Add signal information to tooltips based on detection rules
-            const pointIndex = context.dataIndex;
-            const relevantSignals = signals.filter(signal => 
-              signal.dataPoints.includes(pointIndex)
-            );
-            
-            if (relevantSignals.length > 0) {
-              return relevantSignals.map(signal => 
-                `Signal: ${signal.type.toUpperCase()} - ${signal.description}`
-              );
-            }
-            return [];
-          }
-        }
+        callbacks: createTooltipCallbacks('x')
       },
     },
     scales: {
@@ -253,14 +311,50 @@ const PBCChart: React.FC<PBCChartProps> = ({
         display: true,
         title: {
           display: true,
-          text: 'Time'
+          text: 'Completion Date'
         }
       },
       y: {
         display: true,
         title: {
           display: true,
-          text: 'Value'
+          text: 'Cycle Time (Days)'
+        }
+      }
+    },
+    interaction: {
+      mode: 'nearest',
+      axis: 'x',
+      intersect: false
+    }
+  };
+
+  const mrChartOptions: ChartOptions<'line'> = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: {
+        position: 'top' as const,
+      },
+      tooltip: {
+        mode: 'index',
+        intersect: false,
+        callbacks: createTooltipCallbacks('mr')
+      },
+    },
+    scales: {
+      x: {
+        display: true,
+        title: {
+          display: true,
+          text: 'Completion Date'
+        }
+      },
+      y: {
+        display: true,
+        title: {
+          display: true,
+          text: 'Moving Range (Days)'
         }
       }
     },
@@ -272,61 +366,114 @@ const PBCChart: React.FC<PBCChartProps> = ({
   };
 
   return (
-    <div style={{ width: '100%', height: '900px' }}>
-      <h3 style={{ textAlign: 'center', marginBottom: '20px' }}>{title}</h3>
+    <Box sx={{ width: '100%', mb: 4 }}>
+      <Typography variant="h4" component="h3" align="center" gutterBottom>
+        {title}
+      </Typography>
       
       {/* X Chart (Individual Values) */}
-      <div style={{ height: '400px', marginBottom: '20px' }}>
-        <h4 style={{ textAlign: 'center', marginBottom: '10px' }}>
-          Individual Values Chart (X Chart)
-        </h4>
-        <div style={{ height: '350px' }}>
-          <Line data={xChartData} options={chartOptions} />
-        </div>
-      </div>
+      <Paper elevation={2} sx={{ p: 3, mb: 4 }}>
+        <Typography variant="h5" component="h4" align="center" gutterBottom>
+          Individual Values Chart (X Chart) - Cycle Time Analysis
+        </Typography>
+        <Box sx={{ height: '400px' }}>
+          <Line data={xChartData} options={xChartOptions} />
+        </Box>
+      </Paper>
       
       {/* mR Chart (Moving Range) */}
-      <div style={{ height: '300px', marginBottom: '20px' }}>
-        <h4 style={{ textAlign: 'center', marginBottom: '10px' }}>
-          Moving Range Chart (mR Chart)
-        </h4>
-        <div style={{ height: '250px' }}>
-          <Line data={mrChartData} options={chartOptions} />
-        </div>
-      </div>
+      <Paper elevation={2} sx={{ p: 3, mb: 4 }}>
+        <Typography variant="h5" component="h4" align="center" gutterBottom>
+          Moving Range Chart (mR Chart) - Process Variation
+        </Typography>
+        <Box sx={{ height: '350px' }}>
+          <Line data={mrChartData} options={mrChartOptions} />
+        </Box>
+      </Paper>
 
       {/* Flow Metrics Insights Component */}
       <FlowMetricsInsights analysis={analysis} />
 
-      {/* Signal Summary based on Vacanti's methodology */}
+      {/* Enhanced Signal Summary with better layout */}
       {signals.length > 0 && (
-        <div style={{ marginTop: '20px', padding: '15px', backgroundColor: '#f5f5f5', borderRadius: '8px' }}>
-          <h4>Process Behaviour Analysis: {signals.length} Signal(s) Detected</h4>
-          <p style={{ fontSize: '14px', color: '#666', marginBottom: '10px' }}>
+        <Paper elevation={2} sx={{ p: 3, mt: 3 }}>
+          <Typography variant="h5" gutterBottom>
+            Process Behaviour Analysis: {signals.length} Signal(s) Detected
+          </Typography>
+          
+          <Typography variant="body2" color="text.secondary" paragraph>
             <strong>Signal Detection Rules (Western Electric Zone Tests):</strong>
-          </p>
-          <ul style={{ fontSize: '12px', color: '#666', margin: '0', paddingLeft: '20px' }}>
-            <li><strong>Red points:</strong> Rule 1 - Points outside Natural Process Limits (high severity)</li>
-            <li><strong>Orange points:</strong> Rules 2-3 - Pattern-based detection (moderate severity)</li>
-            <li><strong>Light red points:</strong> Rule 4 - Sustained shifts (low severity)</li>
-          </ul>
-          <p style={{ fontSize: '12px', color: '#666', marginTop: '10px' }}>
-            Signals indicate exceptional variation requiring investigation, while points within limits represent routine variation.
-          </p>
-        </div>
+          </Typography>
+          
+          <Grid container spacing={2} sx={{ mb: 3 }}>
+            <Grid item xs={12} sm={4}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <Box sx={{ width: 12, height: 12, bgcolor: '#f44336', borderRadius: '50%' }} />
+                <Typography variant="body2">Rule 1 - Outside Limits (High)</Typography>
+              </Box>
+            </Grid>
+            <Grid item xs={12} sm={4}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <Box sx={{ width: 12, height: 12, bgcolor: '#ff9800', borderRadius: '50%' }} />
+                <Typography variant="body2">Rules 2-3 - Patterns (Moderate)</Typography>
+              </Box>
+            </Grid>
+            <Grid item xs={12} sm={4}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <Box sx={{ width: 12, height: 12, bgcolor: '#ff5722', borderRadius: '50%' }} />
+                <Typography variant="body2">Rule 4 - Shifts (Low)</Typography>
+              </Box>
+            </Grid>
+          </Grid>
+          
+          <Typography variant="body2" color="text.secondary" paragraph>
+            Signals indicate exceptional variation requiring investigation. Hover over points to see task details.
+          </Typography>
+        </Paper>
       )}
 
       {/* Predictability Assessment */}
       {signals.length === 0 && (
-        <div style={{ marginTop: '20px', padding: '15px', backgroundColor: '#e8f5e8', borderRadius: '8px' }}>
-          <h4 style={{ color: '#2e7d32' }}>Process Operating Predictably</h4>
-          <p style={{ fontSize: '14px', color: '#2e7d32', margin: '0' }}>
+        <Paper elevation={2} sx={{ p: 3, mt: 3, bgcolor: 'success.light' }}>
+          <Typography variant="h5" color="success.dark" gutterBottom>
+            Process Operating Predictably
+          </Typography>
+          <Typography variant="body1" color="success.dark">
             No signals detected. Your process exhibits only routine variation within Natural Process Limits, 
             indicating predictable performance suitable for forecasting as described in Vacanti's methodology.
-          </p>
-        </div>
+          </Typography>
+        </Paper>
       )}
-    </div>
+
+      {/* Data Quality Information - Separated and organized */}
+      <Paper elevation={1} sx={{ p: 2, mt: 3, bgcolor: 'info.light' }}>
+        <Typography variant="h6" color="info.dark" gutterBottom>
+          Data Quality Summary
+        </Typography>
+        <Grid container spacing={2}>
+          <Grid item xs={12} sm={6} md={3}>
+            <Typography variant="body2" color="info.dark">
+              ✅ Only "Done" tasks included
+            </Typography>
+          </Grid>
+          <Grid item xs={12} sm={6} md={3}>
+            <Typography variant="body2" color="info.dark">
+              ❌ "Won't fix" tasks excluded
+            </Typography>
+          </Grid>
+          <Grid item xs={12} sm={6} md={3}>
+            <Typography variant="body2" color="info.dark">
+              🎯 Enhanced tooltips with task details
+            </Typography>
+          </Grid>
+          <Grid item xs={12} sm={6} md={3}>
+            <Typography variant="body2" color="info.dark">
+              📊 {xChart.values.length} data points analyzed
+            </Typography>
+          </Grid>
+        </Grid>
+      </Paper>
+    </Box>
   );
 };
 

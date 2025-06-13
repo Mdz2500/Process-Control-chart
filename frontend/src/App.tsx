@@ -32,15 +32,17 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [config, setConfig] = useState<ChartConfiguration | null>(null);
+  const [originalData, setOriginalData] = useState<DataPoint[]>([]);
 
   const handleDataSubmit = async (data: DataPoint[], chartConfig: ChartConfiguration) => {
     setLoading(true);
     setError(null);
     setConfig(chartConfig);
+    setOriginalData(data); // Store original data for chart tooltips
     
     try {
-      console.log('Submitting data:', data); // Debug log
-      console.log('Chart configuration:', chartConfig); // Debug log
+      console.log('Submitting data:', data);
+      console.log('Chart configuration:', chartConfig);
       
       // Validate data before sending
       if (!data || data.length === 0) {
@@ -67,18 +69,15 @@ function App() {
         }
       });
 
-      // Remove the duplicate timestamp check - this is allowed per Vacanti's methodology
-      // Multiple work items can complete on the same day in real flow metrics
-
-      console.log('Data validation passed, calling API...'); // Debug log
+      console.log('Data validation passed, calling API...');
       
       const result = await calculatePBC({
-        data: sortedData, // Use chronologically sorted data
+        data: sortedData,
         baselinePeriod: chartConfig.baselinePeriod,
         detectionRules: chartConfig.detectionRules
       });
       
-      console.log('Received result:', result); // Debug log
+      console.log('Received result:', result);
       
       // Validate the response structure
       if (!result) {
@@ -101,13 +100,12 @@ function App() {
         throw new Error('Invalid response structure: missing signals');
       }
 
-      console.log('Response validation passed'); // Debug log
+      console.log('Response validation passed');
       
       setAnalysis(result);
     } catch (err: any) {
       console.error('Error details:', err);
       
-      // Provide specific error messages based on error type
       let errorMessage = 'Failed to calculate PBC';
       
       if (err.message) {
@@ -189,7 +187,7 @@ function App() {
           <>
             <Box sx={{ mb: 3 }}>
               <Typography variant="h4" gutterBottom>
-                Analysis Results
+                Flow Metrics Analysis Results
               </Typography>
               <Typography variant="body2" color="textSecondary">
                 Baseline Period: {analysis.baselinePeriod} data points | 
@@ -197,41 +195,36 @@ function App() {
                 Signals Detected: {analysis.signals.length}
               </Typography>
               <Typography variant="body2" color="textSecondary" sx={{ mt: 1 }}>
-                Following Vacanti's principle: Chronologically ordered data preserving temporal context
+                Filtered data: Only "Done" tasks included, "Won't fix" excluded | 
+                Enhanced tooltips available for both X and mR charts
               </Typography>
             </Box>
             
             <PBCChart 
               analysis={analysis} 
               showSigmaLines={config.showSigmaLines}
-              title="Process Behaviour Chart (XmR) - Vacanti Methodology"
+              title="Nave Flow Metrics - Process Behaviour Chart (XmR)"
+              originalData={originalData} // Pass original data for enhanced tooltips
             />
             
-            <SignalDetector signals={analysis.signals} />
-            
-            {analysis.signals.length === 0 && (
-              <Alert severity="success" sx={{ mt: 3 }}>
-                <Typography variant="subtitle2" gutterBottom>
-                  Process Operating Predictably
-                </Typography>
-                No signals detected. Your process exhibits only routine variation within Natural Process Limits, 
-                indicating predictable performance suitable for forecasting as described in Vacanti's methodology.
-              </Alert>
-            )}
+            {/* Separate SignalDetector component with better spacing */}
+            <Box sx={{ mt: 4 }}>
+              <SignalDetector signals={analysis.signals} />
+            </Box>
           </>
         )}
 
         {!analysis && !loading && !error && (
           <Box sx={{ textAlign: 'center', mt: 6, mb: 4 }}>
             <Typography variant="h5" color="textSecondary" gutterBottom>
-              Ready to Analyze Your Process
+              Ready to Analyze Your Flow Metrics
             </Typography>
             <Typography variant="body1" color="textSecondary">
-              Enter your time series data above and click "Generate PBC" to create your Process Behaviour Chart.
-              Minimum 6 data points recommended for meaningful analysis per Vacanti's guidance.
+              Upload your Nave CSV file or enter data manually to create Process Behaviour Charts.
+              Minimum 6 completed tasks recommended for meaningful analysis per Vacanti's guidance.
             </Typography>
             <Typography variant="body2" color="textSecondary" sx={{ mt: 2 }}>
-              <strong>Note:</strong> Duplicate timestamps are allowed - multiple work items can complete on the same day.
+              <strong>Enhanced Features:</strong> Automatic filtering of "Won't fix" items, task-specific tooltips for both charts, and Vacanti-compliant analysis.
             </Typography>
           </Box>
         )}

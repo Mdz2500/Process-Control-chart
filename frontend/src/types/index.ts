@@ -2,6 +2,10 @@ export interface DataPoint {
   timestamp: Date;
   value: number;
   label?: string;
+  // Enhanced properties for Nave integration
+  taskKey?: string;
+  taskName?: string;
+  cycleTimeDays?: number;
 }
 
 export interface ProcessLimits {
@@ -40,6 +44,9 @@ export interface XChart {
   upperLimit: number;
   lowerLimit: number;
   sigmaLines: SigmaLines;
+  // Enhanced for Nave integration
+  taskKeys?: string[];
+  taskNames?: string[];
 }
 
 export interface MRChart {

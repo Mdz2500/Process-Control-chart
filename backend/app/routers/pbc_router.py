@@ -1,10 +1,9 @@
 from fastapi import APIRouter, HTTPException
 from typing import List
 import logging
-from app.models.data_models import PBCRequest, PBCResponse, DataPoint, Signal, ProcessLimits  # Import all needed classes
+from app.models.data_models import PBCRequest, PBCResponse, DataPoint, Signal, ProcessLimits
 from app.services.pbc_calculator import PBCCalculator
 from app.services.signal_detector import SignalDetector
-
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -14,7 +13,7 @@ router = APIRouter(prefix="/api", tags=["pbc"])
 
 @router.post("/calculate-pbc", response_model=PBCResponse)
 async def calculate_pbc(request: PBCRequest):
-    """Calculate Process Behaviour Chart with proper field name handling"""
+    """Calculate Process Behaviour Chart with enhanced task information support"""
     
     logger.info(f"Received PBC request with {len(request.data)} data points")
     logger.info(f"Baseline period requested: {request.baselinePeriod}")
@@ -35,6 +34,8 @@ async def calculate_pbc(request: PBCRequest):
         # Extract and validate values
         values = []
         timestamps = []
+        task_keys = []
+        task_names = []
         
         for i, point in enumerate(request.data):
             logger.debug(f"Processing data point {i + 1}: timestamp={point.timestamp}, value={point.value}")
@@ -58,8 +59,14 @@ async def calculate_pbc(request: PBCRequest):
             
             values.append(float(point.value))
             timestamps.append(point.timestamp.isoformat())
+            
+            # Extract task information if available
+            task_key = getattr(point, 'taskKey', f'Task-{i+1}')
+            task_name = getattr(point, 'taskName', 'Unnamed Task')
+            task_keys.append(task_key)
+            task_names.append(task_name)
         
-        logger.info(f"Successfully extracted {len(values)} values")
+        logger.info(f"Successfully extracted {len(values)} values with task information")
         
         # Initialize calculator and detector
         calculator = PBCCalculator()
@@ -117,13 +124,15 @@ async def calculate_pbc(request: PBCRequest):
         moving_ranges = calculator.calculate_moving_ranges(values)
         logger.info(f"Calculated {len(moving_ranges)} moving ranges")
         
-        # Build chart data with proper structure
+        # Build chart data with enhanced task information
         x_chart_data = {
             "timestamps": timestamps,
             "values": values,
             "average": limits.average,
             "upperLimit": limits.upperLimit,
             "lowerLimit": limits.lowerLimit,
+            "taskKeys": task_keys,  # Enhanced for Nave integration
+            "taskNames": task_names,  # Enhanced for Nave integration
             "sigmaLines": {
                 "oneSigmaUpper": sigma_lines.get("oneSigmaUpper", sigma_lines.get("one_sigma_upper", limits.average)),
                 "oneSigmaLower": sigma_lines.get("oneSigmaLower", sigma_lines.get("one_sigma_lower", limits.average)),
@@ -159,10 +168,20 @@ async def calculate_pbc(request: PBCRequest):
                 "averageMovingRange": limits.averageMovingRange,
                 "upperRangeLimit": limits.upperRangeLimit
             },
-            "baselinePeriod": baseline_period
+            "baselinePeriod": baseline_period,
+            # Enhanced metadata for frontend
+            "originalData": [
+                {
+                    "taskKey": task_keys[i],
+                    "taskName": task_names[i],
+                    "value": values[i],
+                    "timestamp": timestamps[i]
+                }
+                for i in range(len(values))
+            ]
         }
         
-        logger.info("PBC calculation completed successfully")
+        logger.info("PBC calculation completed successfully with task information")
         return response_data
         
     except HTTPException:
@@ -185,56 +204,6 @@ async def calculate_pbc(request: PBCRequest):
             detail=f"Internal calculation error: {str(e)}"
         )
 
-def get_flow_metrics_guidance(metric_type: str, signals: List[Signal]) -> dict:
-    """Provide guidance based on Vacanti's flow metrics methodology"""
-    
-    guidance = {
-        "cycle_time": {
-            "interpretation": "Cycle Time measures the elapsed time from when work starts until it's completed",
-            "signals_meaning": "Signals indicate changes in your delivery process that require investigation",
-            "action_items": [
-                "Investigate assignable causes for points outside Natural Process Limits",
-                "Look for process changes during signal periods",
-                "Consider workflow bottlenecks or capacity changes"
-            ]
-        },
-        "throughput": {
-            "interpretation": "Throughput measures the number of items completed per time period",
-            "signals_meaning": "Signals indicate changes in your team's delivery capacity",
-            "action_items": [
-                "Investigate capacity changes during signal periods",
-                "Look for team composition or process changes",
-                "Consider external factors affecting delivery rate"
-            ]
-        }
-    }
-    
-    return guidance.get(metric_type, guidance["cycle_time"])
-
-def generate_vacanti_insights(values: List[float], limits: ProcessLimits, signals: List[Signal]) -> dict:
-    """Generate insights based on Vacanti's predictability framework"""
-    
-    total_points = len(values)
-    signal_points = len(set().union(*[signal.dataPoints for signal in signals]))
-    predictability_ratio = 1 - (signal_points / total_points)
-    
-    if predictability_ratio >= 0.85:
-        predictability_assessment = "Highly Predictable"
-        recommendation = "Your process exhibits routine variation. Focus on continuous improvement."
-    elif predictability_ratio >= 0.70:
-        predictability_assessment = "Moderately Predictable" 
-        recommendation = "Some exceptional variation detected. Investigate assignable causes."
-    else:
-        predictability_assessment = "Unpredictable"
-        recommendation = "Significant exceptional variation. Process improvement needed before forecasting."
-    
-    return {
-        "predictability_ratio": round(predictability_ratio, 3),
-        "assessment": predictability_assessment,
-        "recommendation": recommendation,
-        "baseline_period_guidance": f"Using {len(values)} data points meets Vacanti's minimum 6-point requirement"
-    }
-
 @router.get("/health")
 async def health_check():
     """Health check endpoint with detailed status"""
@@ -255,33 +224,4 @@ async def health_check():
         return {
             "status": "unhealthy",
             "message": f"PBC API health check failed: {str(e)}"
-        }
-
-@router.get("/debug/test-calculation")
-async def test_calculation():
-    """Debug endpoint to test PBC calculation with sample data"""
-    try:
-        sample_data = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]
-        
-        calculator = PBCCalculator()
-        limits = calculator.calculate_natural_process_limits(sample_data)
-        moving_ranges = calculator.calculate_moving_ranges(sample_data)
-        
-        return {
-            "sample_data": sample_data,
-            "limits": {
-                "average": limits.average,
-                "upperLimit": limits.upperLimit,
-                "lowerLimit": limits.lowerLimit,
-                "averageMovingRange": limits.averageMovingRange,
-                "upperRangeLimit": limits.upperRangeLimit
-            },
-            "moving_ranges": moving_ranges,
-            "calculation_status": "success"
-        }
-    except Exception as e:
-        logger.error(f"Test calculation failed: {str(e)}")
-        return {
-            "calculation_status": "failed",
-            "error": str(e)
         }

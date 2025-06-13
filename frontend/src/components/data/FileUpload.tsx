@@ -22,6 +22,7 @@ interface FileUploadProps {
 interface NaveDataPreview {
   totalTasks: number;
   completedTasks: number;
+  filteredOutTasks: number;
   dateRange: { start: Date; end: Date };
   avgCycleTime: number;
   duplicateTimestamps: number;
@@ -51,6 +52,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onDataChange }) => {
       startDate: headers.findIndex(h => h.includes('start date')),
       endDate: headers.findIndex(h => h.includes('end date')),
       status: headers.findIndex(h => h.includes('status')),
+      resolution: headers.findIndex(h => h.includes('resolution')), // Add resolution column
       // Nave provides detailed time tracking in minutes
       backlogTime: headers.findIndex(h => h.includes('backlog (mins)')),
       inProcessTime: headers.findIndex(h => h.includes('in process (mins)')),
@@ -64,6 +66,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onDataChange }) => {
 
     const data: DataPoint[] = [];
     const completedTasks: any[] = [];
+    let filteredOutCount = 0;
     
     for (let i = 1; i < lines.length; i++) {
       const columns = lines[i].split(',').map(c => c.trim().replace(/"/g, ''));
@@ -73,16 +76,33 @@ const FileUpload: React.FC<FileUploadProps> = ({ onDataChange }) => {
       }
 
       const taskKey = columns[columnMap.taskKey] || `Task-${i}`;
+      const taskName = columns[columnMap.taskName] || 'Unnamed Task';
       const startDateStr = columns[columnMap.startDate];
       const endDateStr = columns[columnMap.endDate];
       const status = columns[columnMap.status]?.toLowerCase();
+      const resolution = columns[columnMap.resolution]?.toLowerCase();
       
-      // Only process completed tasks for meaningful PBC analysis
-      if (!status?.includes('done') && !status?.includes('completed')) {
+      // Enhanced filtering based on your requirements
+      // 1. Exclude items with "Won't fix" status
+      if (status?.includes("won't fix") || status?.includes("wont fix")) {
+        filteredOutCount++;
+        continue;
+      }
+      
+      // 2. Only include items with "Done" resolution
+      if (columnMap.resolution !== -1 && resolution && !resolution.includes('done')) {
+        filteredOutCount++;
+        continue;
+      }
+      
+      // 3. Fallback to status check if no resolution column
+      if (columnMap.resolution === -1 && !status?.includes('done') && !status?.includes('completed')) {
+        filteredOutCount++;
         continue;
       }
 
       if (!startDateStr || !endDateStr || endDateStr.toLowerCase().includes('backlog')) {
+        filteredOutCount++;
         continue; // Skip tasks without completion dates
       }
 
@@ -91,51 +111,61 @@ const FileUpload: React.FC<FileUploadProps> = ({ onDataChange }) => {
         const endDate = new Date(endDateStr);
         
         if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+          filteredOutCount++;
           continue; // Skip invalid dates
         }
 
-        let value: number;
+        let value: number = 0; // Initialize value to avoid unassigned usage
         
         if (metricType === 'cycle_time') {
           // Calculate Cycle Time in days (as recommended in Vacanti's document)
           const cycleTimeMs = endDate.getTime() - startDate.getTime();
           value = cycleTimeMs / (1000 * 60 * 60 * 24); // Convert to days
           
+          // Enhanced label with task key and name for tooltips
+          const enhancedLabel = `${taskKey}: ${taskName} (${value.toFixed(1)} days)`;
+          
           // Use end date as the timestamp for when the measurement was taken
-          // Multiple items can complete on the same day - this is normal and allowed
+          // Multiple items can complete on the same day - this is normal and allowed per Vacanti
           data.push({
             timestamp: endDate,
             value: Math.round(value * 100) / 100, // Round to 2 decimal places
-            label: `${taskKey}: ${value.toFixed(1)} days`
-          });
+            label: enhancedLabel,
+            // Add custom properties for tooltip enhancement
+            taskKey: taskKey,
+            taskName: taskName,
+            cycleTimeDays: value
+          } as DataPoint & { taskKey: string; taskName: string; cycleTimeDays: number });
         } else {
           // For throughput analysis, we'll count items completed per week
           // This will be processed differently in a separate function
-          value = 0; // Assign a default value for throughput analysis
         }
 
         completedTasks.push({
           taskKey,
+          taskName,
           startDate,
           endDate,
-          cycleTime: value ?? 0, // Ensure value is not null
-          status
+          cycleTime: value,
+          status,
+          resolution
         });
         
       } catch (error) {
         console.warn(`Skipping row ${i} due to date parsing error:`, error);
+        filteredOutCount++;
         continue;
       }
     }
 
     if (data.length === 0) {
-      throw new Error('No completed tasks found. PBC analysis requires completed work items with start and end dates.');
+      throw new Error('No completed tasks found that meet the criteria. PBC analysis requires completed work items (Done status/resolution) with start and end dates.');
     }
 
     // Sort by completion date for proper time series analysis (Vacanti's requirement)
     data.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
 
-    // Calculate statistics including duplicate timestamps (which are allowed)
+    // Calculate statistics including duplicate timestamps (which are allowed per Vacanti)
     const cycleTimeValues = data.map(d => d.value);
     const avgCycleTime = cycleTimeValues.reduce((sum, val) => sum + val, 0) / cycleTimeValues.length;
     
@@ -145,8 +175,9 @@ const FileUpload: React.FC<FileUploadProps> = ({ onDataChange }) => {
     const duplicateTimestamps = timestamps.length - uniqueTimestamps.size;
     
     setPreview({
-      totalTasks: completedTasks.length,
+      totalTasks: completedTasks.length + filteredOutCount,
       completedTasks: completedTasks.length,
+      filteredOutTasks: filteredOutCount,
       dateRange: {
         start: new Date(Math.min(...data.map(d => d.timestamp.getTime()))),
         end: new Date(Math.max(...data.map(d => d.timestamp.getTime())))
@@ -181,7 +212,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onDataChange }) => {
       
       // Validate minimum data points for meaningful PBC analysis
       if (pbcData.length < 6) {
-        throw new Error(`Only ${pbcData.length} completed tasks found. Minimum 6 data points required for meaningful Process Behaviour Chart analysis as per Vacanti's methodology.`);
+        throw new Error(`Only ${pbcData.length} completed tasks found that meet the criteria. Minimum 6 data points required for meaningful Process Behaviour Chart analysis as per Vacanti's methodology.`);
       }
 
       onDataChange(pbcData);
@@ -202,7 +233,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onDataChange }) => {
       
       <Typography variant="body2" color="textSecondary" sx={{ mb: 2 }}>
         Upload a CSV file exported from Nave to analyze your flow metrics using Process Behaviour Charts.
-        Supports Cycle Time and Throughput analysis as described in Vacanti's methodology.
+        Only completed tasks (Done status/resolution) will be included, excluding "Won't fix" items.
       </Typography>
 
       {/* Metric Type Selection */}
@@ -263,8 +294,9 @@ const FileUpload: React.FC<FileUploadProps> = ({ onDataChange }) => {
             Nave Data Successfully Processed
           </Typography>
           
-          <Stack direction="row" spacing={1} sx={{ mb: 1 }}>
-            <Chip label={`${preview.completedTasks} completed tasks`} size="small" />
+          <Stack direction="row" spacing={1} sx={{ mb: 1, flexWrap: 'wrap' }}>
+            <Chip label={`${preview.completedTasks} completed tasks included`} size="small" color="success" />
+            <Chip label={`${preview.filteredOutTasks} tasks filtered out`} size="small" color="info" />
             <Chip 
               label={`Avg ${metricType === 'cycle_time' ? 'Cycle Time' : 'Throughput'}: ${preview.avgCycleTime.toFixed(1)} ${metricType === 'cycle_time' ? 'days' : 'items/week'}`} 
               size="small" 
@@ -287,27 +319,24 @@ const FileUpload: React.FC<FileUploadProps> = ({ onDataChange }) => {
             Vacanti's requirements for meaningful XmR chart analysis.
           </Typography>
           
-          {preview.duplicateTimestamps > 0 && (
-            <Typography variant="body2" sx={{ mt: 1, fontStyle: 'italic' }}>
-              Note: Multiple items completing on the same day is normal in flow metrics and 
-              allowed per Vacanti's methodology.
-            </Typography>
-          )}
+          <Typography variant="body2" sx={{ mt: 1, fontStyle: 'italic' }}>
+            Filtered out: "Won't fix" status and non-"Done" resolutions as per your requirements.
+          </Typography>
         </Alert>
       )}
 
-      {/* Nave-specific help text */}
+      {/* Enhanced help text */}
       <Box sx={{ mt: 2, p: 2, bgcolor: 'grey.50', borderRadius: 1 }}>
         <Typography variant="subtitle2" gutterBottom>
-          Vacanti's Requirements for Flow Metrics:
+          Filtering Rules Applied:
         </Typography>
         <Typography variant="body2" component="ul" sx={{ pl: 2 }}>
-          <li>Export your data from Nave with "Start date" and "End date" columns</li>
-          <li>Only completed tasks (status = "Done") will be analyzed</li>
-          <li>Data will be sorted chronologically to preserve temporal context</li>
-          <li>Duplicate timestamps are allowed - multiple items can complete on same day</li>
-          <li>Minimum 6 completed tasks required for reliable PBC analysis</li>
-          <li>Moving ranges will capture local, short-term routine variation</li>
+          <li>✅ Include: Tasks with "Done" status or "Done" resolution</li>
+          <li>❌ Exclude: Tasks with "Won't fix" status</li>
+          <li>❌ Exclude: Tasks with non-"Done" resolutions</li>
+          <li>❌ Exclude: Tasks without completion dates</li>
+          <li>📊 Result: Only completed work items for accurate flow metrics</li>
+          <li>🎯 Hover over chart points to see Task Key and Task Name</li>
         </Typography>
       </Box>
     </Box>
