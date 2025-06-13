@@ -11,9 +11,10 @@ import {
 } from '@mui/material';
 import DataInput from './components/data/DataInput';
 import PBCChart from './components/charts/PBCChart';
+import ThroughputChart from './components/charts/ThroughputChart';
 import SignalDetector from './components/analysis/SignalDetector';
-import { DataPoint, ChartConfiguration, PBCAnalysis } from './types';
-import { calculatePBC } from './services/api';
+import { DataPoint, ChartConfiguration, PBCAnalysis, ThroughputResponse } from './types';
+import { calculatePBC, calculateThroughput } from './services/api';
 import './App.css';
 
 const theme = createTheme({
@@ -29,6 +30,7 @@ const theme = createTheme({
 
 function App() {
   const [analysis, setAnalysis] = useState<PBCAnalysis | null>(null);
+  const [throughputAnalysis, setThroughputAnalysis] = useState<ThroughputResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [config, setConfig] = useState<ChartConfiguration | null>(null);
@@ -38,22 +40,26 @@ function App() {
     setLoading(true);
     setError(null);
     setConfig(chartConfig);
-    setOriginalData(data); // Store original data for chart tooltips
+    setOriginalData(data);
+    
+    // Clear previous analysis
+    setAnalysis(null);
+    setThroughputAnalysis(null);
     
     try {
       console.log('Submitting data:', data);
       console.log('Chart configuration:', chartConfig);
       
-      // Validate data before sending
+      // Validate data
       if (!data || data.length === 0) {
         throw new Error('No data provided');
       }
 
       if (data.length < 3) {
-        throw new Error('Minimum 3 data points required for PBC calculation');
+        throw new Error('Minimum 3 data points required');
       }
 
-      // Ensure chronological ordering (Vacanti's requirement)
+      // Sort data chronologically
       const sortedData = [...data].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
 
       // Validate each data point
@@ -71,42 +77,33 @@ function App() {
 
       console.log('Data validation passed, calling API...');
       
-      const result = await calculatePBC({
-        data: sortedData,
-        baselinePeriod: chartConfig.baselinePeriod,
-        detectionRules: chartConfig.detectionRules
-      });
+      // Route to appropriate analysis based on metric type
+      if (chartConfig.metricType === 'throughput') {
+        const result = await calculateThroughput({
+          data: sortedData,
+          period: chartConfig.throughputPeriod,
+          baselinePeriod: chartConfig.baselinePeriod,
+          detectionRules: chartConfig.detectionRules
+        });
+        
+        console.log('Received throughput result:', result);
+        setThroughputAnalysis(result);
+      } else {
+        const result = await calculatePBC({
+          data: sortedData,
+          baselinePeriod: chartConfig.baselinePeriod,
+          detectionRules: chartConfig.detectionRules,
+          metricType: chartConfig.metricType
+        });
+        
+        console.log('Received PBC result:', result);
+        setAnalysis(result);
+      }
       
-      console.log('Received result:', result);
-      
-      // Validate the response structure
-      if (!result) {
-        throw new Error('No response received from server');
-      }
-
-      if (!result.xChart) {
-        throw new Error('Invalid response structure: missing xChart');
-      }
-
-      if (!result.xChart.timestamps) {
-        throw new Error('Invalid response structure: missing xChart.timestamps');
-      }
-
-      if (!result.mrChart) {
-        throw new Error('Invalid response structure: missing mrChart');
-      }
-
-      if (!result.signals) {
-        throw new Error('Invalid response structure: missing signals');
-      }
-
-      console.log('Response validation passed');
-      
-      setAnalysis(result);
     } catch (err: any) {
       console.error('Error details:', err);
       
-      let errorMessage = 'Failed to calculate PBC';
+      let errorMessage = 'Failed to calculate analysis';
       
       if (err.message) {
         errorMessage = err.message;
@@ -131,6 +128,7 @@ function App() {
   const handleRetry = () => {
     setError(null);
     setAnalysis(null);
+    setThroughputAnalysis(null);
   };
 
   return (
@@ -155,7 +153,7 @@ function App() {
           <Box display="flex" flexDirection="column" alignItems="center" my={4}>
             <CircularProgress size={60} />
             <Typography variant="body2" sx={{ mt: 2 }}>
-              Calculating Process Behaviour Chart using Vacanti's XmR methodology...
+              Calculating analysis using Vacanti's methodology...
             </Typography>
           </Box>
         )}
@@ -183,48 +181,70 @@ function App() {
           </Alert>
         )}
 
-        {analysis && config && !loading && !error && (
+        {/* Cycle Time Analysis Results */}
+        {analysis && config && config.metricType === 'cycle_time' && !loading && !error && (
           <>
             <Box sx={{ mb: 3 }}>
               <Typography variant="h4" gutterBottom>
-                Flow Metrics Analysis Results
+                Cycle Time Analysis Results
               </Typography>
               <Typography variant="body2" color="textSecondary">
                 Baseline Period: {analysis.baselinePeriod} data points | 
                 Detection Rules: {config.detectionRules.join(', ').toUpperCase()} | 
                 Signals Detected: {analysis.signals.length}
               </Typography>
-              <Typography variant="body2" color="textSecondary" sx={{ mt: 1 }}>
-                Filtered data: Only "Done" tasks included, "Won't fix" excluded | 
-                Enhanced tooltips available for both X and mR charts
-              </Typography>
             </Box>
             
             <PBCChart 
               analysis={analysis} 
               showSigmaLines={config.showSigmaLines}
-              title="Nave Flow Metrics - Process Behaviour Chart (XmR)"
-              originalData={originalData} // Pass original data for enhanced tooltips
+              title="Cycle Time Analysis - Process Behaviour Chart (XmR)"
+              originalData={originalData}
             />
             
-            {/* Separate SignalDetector component with better spacing */}
             <Box sx={{ mt: 4 }}>
               <SignalDetector signals={analysis.signals} />
             </Box>
           </>
         )}
 
-        {!analysis && !loading && !error && (
+        {/* Throughput Analysis Results */}
+        {throughputAnalysis && config && config.metricType === 'throughput' && !loading && !error && (
+          <>
+            <Box sx={{ mb: 3 }}>
+              <Typography variant="h4" gutterBottom>
+                Throughput Analysis Results
+              </Typography>
+              <Typography variant="body2" color="textSecondary">
+                Period: {config.throughputPeriod} | 
+                Baseline Period: {throughputAnalysis.baselinePeriod} periods | 
+                Signals Detected: {throughputAnalysis.signals.length}
+              </Typography>
+            </Box>
+            
+            <ThroughputChart 
+              analysis={throughputAnalysis} 
+              showSigmaLines={config.showSigmaLines}
+              title="Throughput Analysis - Process Behaviour Chart"
+            />
+            
+            <Box sx={{ mt: 4 }}>
+              <SignalDetector signals={throughputAnalysis.signals} />
+            </Box>
+          </>
+        )}
+
+        {!analysis && !throughputAnalysis && !loading && !error && (
           <Box sx={{ textAlign: 'center', mt: 6, mb: 4 }}>
             <Typography variant="h5" color="textSecondary" gutterBottom>
               Ready to Analyze Your Flow Metrics
             </Typography>
             <Typography variant="body1" color="textSecondary">
               Upload your Nave CSV file or enter data manually to create Process Behaviour Charts.
-              Minimum 6 completed tasks recommended for meaningful analysis per Vacanti's guidance.
+              Choose between Cycle Time and Throughput analysis based on your needs.
             </Typography>
             <Typography variant="body2" color="textSecondary" sx={{ mt: 2 }}>
-              <strong>Enhanced Features:</strong> Automatic filtering of "Won't fix" items, task-specific tooltips for both charts, and Vacanti-compliant analysis.
+              <strong>Enhanced Features:</strong> Automatic filtering, task-specific tooltips, and Vacanti-compliant analysis.
             </Typography>
           </Box>
         )}

@@ -23,11 +23,47 @@ export interface Signal {
   severity: 'high' | 'moderate' | 'low';
 }
 
+// Fixed throughput period types
+export type ThroughputPeriod = 'daily' | 'weekly' | 'monthly';
+
+export interface ThroughputDataPoint {
+  periodStart: Date;
+  periodEnd: Date;
+  itemCount: number;
+  itemsCompleted: string[];
+  period: ThroughputPeriod;
+}
+
+export interface ThroughputAnalysis {
+  throughputData: ThroughputDataPoint[];
+  averageThroughput: number;
+  medianThroughput: number;
+  minThroughput: number;
+  maxThroughput: number;
+  period: ThroughputPeriod;
+  totalPeriods: number;
+  totalItemsCompleted: number;
+  predictabilityScore: number;
+}
+
+export interface ThroughputResponse {
+  throughputAnalysis: ThroughputAnalysis;
+  xChart: XChart;
+  mrChart: MRChart;
+  signals: Signal[];
+  limits: ProcessLimits;
+  baselinePeriod: number;
+  recommendations: string[];
+}
+
 export interface ChartConfiguration {
   baselinePeriod: number;
   showSigmaLines: boolean;
   detectionRules: string[];
   timeFormat: string;
+  // Enhanced for throughput
+  metricType: 'cycle_time' | 'throughput';
+  throughputPeriod: ThroughputPeriod;
 }
 
 export interface SigmaLines {
@@ -56,12 +92,17 @@ export interface MRChart {
   upperLimit: number;
 }
 
+// Enhanced PBC Analysis to support throughput
 export interface PBCAnalysis {
   xChart: XChart;
   mrChart: MRChart;
   signals: Signal[];
   limits: ProcessLimits;
   baselinePeriod: number;
+  // Enhanced for throughput support
+  throughputAnalysis?: ThroughputAnalysis;
+  recommendations?: string[];
+  metricType?: 'cycle_time' | 'throughput';
 }
 
 // Detection Rule Types based on Western Electric Zone Tests
@@ -74,7 +115,7 @@ export interface DetectionRule {
   enabled: boolean;
 }
 
-// Flow Metrics Types (for future expansion)
+// Flow Metrics Types
 export interface FlowMetrics {
   cycleTime?: number;
   throughput?: number;
@@ -114,71 +155,18 @@ export interface ValidationError {
   code: string;
 }
 
-// Baseline Management Types
-export interface BaselineInfo {
-  startDate: Date;
-  endDate: Date;
-  dataPoints: number;
-  isStale: boolean;
-  lastUpdated: Date;
-}
+// Constants
+export const THROUGHPUT_PERIODS = {
+  daily: 'Daily',
+  weekly: 'Weekly', 
+  monthly: 'Monthly'
+} as const;
 
-// Process Characterization Types
-export interface ProcessCharacterization {
-  isPredictable: boolean;
-  variationType: 'routine' | 'exceptional' | 'mixed';
-  signalCount: number;
-  recommendedActions: string[];
-}
+export const METRIC_TYPES = {
+  cycle_time: 'Cycle Time',
+  throughput: 'Throughput'
+} as const;
 
-// Statistical Summary Types
-export interface StatisticalSummary {
-  count: number;
-  minimum: number;
-  maximum: number;
-  average: number;
-  median: number;
-  standardDeviation: number;
-  variance: number;
-  range: number;
-}
-
-// Moving Range Types
-export interface MovingRangeData {
-  values: number[];
-  average: number;
-  upperLimit: number;
-}
-
-// Time Series Analysis Types
-export interface TimeSeriesMetadata {
-  startDate: Date;
-  endDate: Date;
-  frequency: 'daily' | 'weekly' | 'monthly' | 'irregular';
-  totalPoints: number;
-  missingPoints: number;
-}
-
-// Chart Annotation Types
-export interface ChartAnnotation {
-  id: string;
-  timestamp: Date;
-  type: 'event' | 'change' | 'note';
-  title: string;
-  description: string;
-  color?: string;
-}
-
-// User Preferences Types
-export interface UserPreferences {
-  defaultBaselinePeriod: number;
-  defaultDetectionRules: DetectionRuleType[];
-  defaultTimeFormat: string;
-  autoUpdateLimits: boolean;
-  showWarnings: boolean;
-}
-
-// Constants for the application
 export const DETECTION_RULES: Record<DetectionRuleType, DetectionRule> = {
   rule1: {
     type: 'rule1',

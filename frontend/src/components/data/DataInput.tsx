@@ -14,9 +14,11 @@ import {
   MenuItem,
   Switch,
   FormControlLabel,
-  Alert
+  Alert,
+  Chip,
+  Stack
 } from '@mui/material';
-import { DataPoint, ChartConfiguration } from '../../types';
+import { DataPoint, ChartConfiguration, ThroughputPeriod } from '../../types';
 import FileUpload from './FileUpload';
 import ManualInput from './ManualInput';
 
@@ -33,7 +35,9 @@ const DataInput: React.FC<DataInputProps> = ({ onDataSubmit, loading }) => {
     baselinePeriod: 20,
     showSigmaLines: false,
     detectionRules: ['rule1', 'rule4'],
-    timeFormat: 'MM/dd/yyyy'
+    timeFormat: 'MM/dd/yyyy',
+    metricType: 'cycle_time',
+    throughputPeriod: 'weekly' as ThroughputPeriod
   });
 
   const handleTabChange = (event: React.SyntheticEvent, newValue: number) => {
@@ -42,24 +46,28 @@ const DataInput: React.FC<DataInputProps> = ({ onDataSubmit, loading }) => {
 
   const handleDataChange = (newData: DataPoint[]) => {
     setData(newData);
-    setError(null); // Clear any previous errors
+    setError(null);
   };
 
   const handleConfigChange = (key: keyof ChartConfiguration, value: any) => {
     setConfig(prev => ({ ...prev, [key]: value }));
   };
 
-  // Updated validation function aligned with Vacanti's methodology
+  // Enhanced validation for both cycle time and throughput
   const validateData = (data: DataPoint[]): string | null => {
     if (data.length < 3) {
       return "Minimum 3 data points required";
     }
     
-    if (data.length < 6) {
-      return "Warning: Less than 6 data points may produce unreliable results. Vacanti recommends minimum 6 for meaningful analysis.";
+    if (config.metricType === 'cycle_time' && data.length < 6) {
+      return "Warning: Less than 6 data points may produce unreliable results for cycle time analysis.";
     }
     
-    // Check for valid values
+    if (config.metricType === 'throughput' && data.length < 10) {
+      return "Warning: Less than 10 completed items recommended for reliable throughput analysis.";
+    }
+    
+    // Validate data points
     for (let i = 0; i < data.length; i++) {
       const point = data[i];
       
@@ -76,24 +84,13 @@ const DataInput: React.FC<DataInputProps> = ({ onDataSubmit, loading }) => {
       }
     }
     
-    // Ensure chronological ordering (Vacanti's requirement #1)
-    const sortedData = [...data].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
-    const wasReordered = data.some((point, index) => 
-      point.timestamp.getTime() !== sortedData[index].timestamp.getTime()
-    );
-    
-    if (wasReordered) {
-      return "Warning: Data was not in chronological order. Data will be automatically sorted to preserve temporal sequence as required by Vacanti's methodology.";
-    }
-    
-    // Check for logical comparability (Vacanti's requirement #2)
-    // Ensure successive values represent the same process
+    // Check for meaningful variation
     const values = data.map(p => p.value);
     const range = Math.max(...values) - Math.min(...values);
     const average = values.reduce((sum, val) => sum + val, 0) / values.length;
     
     if (range / average < 0.001) {
-      return "Warning: Very low variation detected. Moving ranges may not capture meaningful process variation as required for XmR charts.";
+      return "Warning: Very low variation detected. Results may not be meaningful for process analysis.";
     }
     
     return null;
@@ -102,7 +99,7 @@ const DataInput: React.FC<DataInputProps> = ({ onDataSubmit, loading }) => {
   const handleSubmit = () => {
     let processedData = [...data];
     
-    // Ensure chronological ordering as per Vacanti's requirements
+    // Ensure chronological ordering
     processedData.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
     
     const validationError = validateData(processedData);
@@ -112,7 +109,6 @@ const DataInput: React.FC<DataInputProps> = ({ onDataSubmit, loading }) => {
       return;
     }
     
-    // Show warnings but allow processing
     if (validationError && validationError.includes('Warning')) {
       setError(validationError);
     }
@@ -122,11 +118,39 @@ const DataInput: React.FC<DataInputProps> = ({ onDataSubmit, loading }) => {
     }
   };
 
+  const getMetricDescription = () => {
+    if (config.metricType === 'cycle_time') {
+      return "Cycle Time measures the elapsed time from when work starts until completion. Ideal for understanding delivery predictability.";
+    } else {
+      return "Throughput measures the number of work items completed per time period. Essential for capacity planning and forecasting.";
+    }
+  };
+
   return (
     <Paper elevation={3} sx={{ p: 3, mb: 3 }}>
       <Typography variant="h5" gutterBottom>
-        Data Input & Configuration
+        Flow Metrics Analysis - Data Input & Configuration
       </Typography>
+      
+      {/* Metric Type Selection */}
+      <Box sx={{ mb: 3 }}>
+        <FormControl fullWidth sx={{ mb: 2 }}>
+          <InputLabel>Flow Metric Type</InputLabel>
+          <Select
+            value={config.metricType}
+            onChange={(e) => handleConfigChange('metricType', e.target.value)}
+          >
+            <MenuItem value="cycle_time">Cycle Time Analysis</MenuItem>
+            <MenuItem value="throughput">Throughput Analysis</MenuItem>
+          </Select>
+        </FormControl>
+        
+        <Alert severity="info" sx={{ mb: 2 }}>
+          <Typography variant="body2">
+            <strong>{config.metricType === 'cycle_time' ? 'Cycle Time' : 'Throughput'} Analysis:</strong> {getMetricDescription()}
+          </Typography>
+        </Alert>
+      </Box>
       
       <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
         <Tabs value={tabValue} onChange={handleTabChange}>
@@ -140,7 +164,7 @@ const DataInput: React.FC<DataInputProps> = ({ onDataSubmit, loading }) => {
         <ManualInput onDataChange={handleDataChange} />
       )}
       {tabValue === 1 && (
-        <FileUpload onDataChange={handleDataChange} />
+        <FileUpload onDataChange={handleDataChange} metricType={config.metricType} />
       )}
 
       {/* Error Display */}
@@ -153,7 +177,7 @@ const DataInput: React.FC<DataInputProps> = ({ onDataSubmit, loading }) => {
       {/* Configuration Section */}
       <Box sx={{ mt: 4 }}>
         <Typography variant="h6" gutterBottom>
-          Chart Configuration
+          Analysis Configuration
         </Typography>
         
         <Grid container spacing={3}>
@@ -168,6 +192,22 @@ const DataInput: React.FC<DataInputProps> = ({ onDataSubmit, loading }) => {
               helperText="6-20 recommended per Vacanti"
             />
           </Grid>
+          
+          {config.metricType === 'throughput' && (
+            <Grid item xs={12} sm={6} md={3}>
+              <FormControl fullWidth>
+                <InputLabel>Throughput Period</InputLabel>
+                <Select
+                  value={config.throughputPeriod}
+                  onChange={(e) => handleConfigChange('throughputPeriod', e.target.value as ThroughputPeriod)}
+                >
+                  <MenuItem value="daily">Daily</MenuItem>
+                  <MenuItem value="weekly">Weekly</MenuItem>
+                  <MenuItem value="monthly">Monthly</MenuItem>
+                </Select>
+              </FormControl>
+            </Grid>
+          )}
           
           <Grid item xs={12} sm={6} md={3}>
             <FormControl fullWidth>
@@ -195,7 +235,7 @@ const DataInput: React.FC<DataInputProps> = ({ onDataSubmit, loading }) => {
             />
           </Grid>
           
-          <Grid item xs={12} sm={6} md={3}>
+          <Grid item xs={12}>
             <Button
               fullWidth
               variant="contained"
@@ -204,27 +244,51 @@ const DataInput: React.FC<DataInputProps> = ({ onDataSubmit, loading }) => {
               disabled={data.length < 3 || loading}
               sx={{ height: '56px' }}
             >
-              {loading ? 'Analyzing...' : 'Generate PBC'}
+              {loading ? 'Analyzing...' : `Generate ${config.metricType === 'cycle_time' ? 'Cycle Time' : 'Throughput'} Analysis`}
             </Button>
           </Grid>
         </Grid>
         
         {data.length > 0 && (
-          <Typography variant="body2" color="textSecondary" sx={{ mt: 2 }}>
-            Data points loaded: {data.length} 
-            {data.length < 6 && ' (minimum 6 recommended for reliable analysis per Vacanti)'}
-          </Typography>
+          <Box sx={{ mt: 2 }}>
+            <Stack direction="row" spacing={1} sx={{ mb: 1 }}>
+              <Chip 
+                label={`${data.length} data points loaded`} 
+                color="primary" 
+                size="small" 
+              />
+              <Chip 
+                label={config.metricType === 'cycle_time' ? 'Cycle Time Analysis' : 'Throughput Analysis'} 
+                color="secondary" 
+                size="small" 
+              />
+              {config.metricType === 'throughput' && (
+                <Chip 
+                  label={`${config.throughputPeriod} periods`} 
+                  color="info" 
+                  size="small" 
+                />
+              )}
+            </Stack>
+            
+            <Typography variant="body2" color="textSecondary">
+              {config.metricType === 'cycle_time' 
+                ? (data.length < 6 ? 'Minimum 6 recommended for reliable cycle time analysis' : 'Ready for cycle time analysis')
+                : (data.length < 10 ? 'Minimum 10 items recommended for reliable throughput analysis' : 'Ready for throughput analysis')
+              }
+            </Typography>
+          </Box>
         )}
         
         <Box sx={{ mt: 2, p: 2, bgcolor: 'grey.50', borderRadius: 1 }}>
           <Typography variant="subtitle2" gutterBottom>
-            Vacanti's Requirements for XmR Charts:
+            Vacanti's Flow Metrics Methodology:
           </Typography>
           <Typography variant="body2" component="ul" sx={{ pl: 2, mb: 0 }}>
-            <li><strong>Chronological ordering:</strong> Data arranged in time sequence</li>
-            <li><strong>Logical comparability:</strong> Successive values from same process</li>
-            <li><strong>Meaningful moving ranges:</strong> Differences capture process variation</li>
-            <li><strong>Duplicate timestamps allowed:</strong> Multiple items can complete on same day</li>
+            <li><strong>Cycle Time:</strong> Elapsed time from work start to completion - measures delivery speed</li>
+            <li><strong>Throughput:</strong> Number of items completed per time period - measures delivery capacity</li>
+            <li><strong>Process Behaviour Charts:</strong> Distinguish between routine variation (noise) and exceptional variation (signals)</li>
+            <li><strong>Predictability:</strong> Stable processes enable reliable forecasting and planning</li>
           </Typography>
         </Box>
       </Box>

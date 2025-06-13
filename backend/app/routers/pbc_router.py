@@ -1,15 +1,135 @@
 from fastapi import APIRouter, HTTPException
 from typing import List
 import logging
-from app.models.data_models import PBCRequest, PBCResponse, DataPoint, Signal, ProcessLimits
+from datetime import datetime
+from app.models.data_models import (
+    PBCRequest, PBCResponse, DataPoint, Signal, ProcessLimits,
+    ThroughputRequest, ThroughputResponse, ThroughputPeriod
+)
 from app.services.pbc_calculator import PBCCalculator
 from app.services.signal_detector import SignalDetector
+from app.services.throughput_calculator import ThroughputCalculator
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["pbc"])
+
+@router.post("/calculate-throughput", response_model=ThroughputResponse)
+async def calculate_throughput(request: ThroughputRequest):
+    """
+    Calculate Throughput analysis with Process Behaviour Charts.
+    
+    Implements Vacanti's methodology for throughput analysis:
+    - Groups completion data by time period (daily/weekly/monthly)
+    - Calculates throughput statistics and predictability metrics
+    - Applies PBC analysis to throughput data for signal detection
+    """
+    logger.info(f"Received throughput request with {len(request.data)} data points")
+    logger.info(f"Period: {request.period}, Baseline: {request.baselinePeriod}")
+    
+    try:
+        # Validate minimum data points
+        if len(request.data) < 3:
+            logger.error(f"Insufficient data points: {len(request.data)} (minimum 3 required)")
+            raise HTTPException(
+                status_code=400,
+                detail="Minimum 3 completed items required for throughput analysis"
+            )
+        
+        # Initialize calculators
+        throughput_calculator = ThroughputCalculator()
+        pbc_calculator = PBCCalculator()
+        signal_detector = SignalDetector()
+        
+        # Calculate throughput analysis
+        throughput_analysis = throughput_calculator.calculate_throughput_analysis(
+            request.data, request.period
+        )
+        
+        logger.info(f"Calculated throughput analysis: {throughput_analysis.totalPeriods} periods, "
+                   f"avg throughput: {throughput_analysis.averageThroughput:.2f}")
+        
+        # Convert throughput data to PBC format for signal detection
+        throughput_pbc_data = throughput_calculator.create_throughput_pbc_data(throughput_analysis)
+        
+        if len(throughput_pbc_data) < 3:
+            raise HTTPException(
+                status_code=400,
+                detail="Insufficient throughput periods for meaningful PBC analysis"
+            )
+        
+        # Extract values for PBC calculation
+        values = [point.value for point in throughput_pbc_data]
+        timestamps = [point.timestamp.isoformat() for point in throughput_pbc_data]
+        
+        # Calculate PBC limits using baseline period
+        baseline_period = min(request.baselinePeriod, len(values))
+        baseline_data = values[:baseline_period]
+        
+        limits = pbc_calculator.calculate_natural_process_limits(baseline_data)
+        sigma_lines = pbc_calculator.calculate_sigma_lines(limits)
+        
+        # Detect signals in throughput data
+        signals = signal_detector.detect_all_signals(values, limits)
+        
+        logger.info(f"Detected {len(signals)} signals in throughput data")
+        
+        # Calculate moving ranges for mR chart
+        moving_ranges = pbc_calculator.calculate_moving_ranges(values)
+        
+        # Build chart data
+        x_chart_data = {
+            "timestamps": timestamps,
+            "values": values,
+            "average": limits.average,
+            "upperLimit": limits.upperLimit,
+            "lowerLimit": limits.lowerLimit,
+            "sigmaLines": {
+                "oneSigmaUpper": sigma_lines["oneSigmaUpper"],
+                "oneSigmaLower": sigma_lines["oneSigmaLower"],
+                "twoSigmaUpper": sigma_lines["twoSigmaUpper"],
+                "twoSigmaLower": sigma_lines["twoSigmaLower"]
+            }
+        }
+        
+        mr_chart_data = {
+            "timestamps": timestamps[1:],
+            "values": moving_ranges,
+            "average": limits.averageMovingRange,
+            "upperLimit": limits.upperRangeLimit
+        }
+        
+        # Generate recommendations
+        recommendations = throughput_calculator.generate_throughput_recommendations(
+            throughput_analysis, signals
+        )
+        
+        response_data = ThroughputResponse(
+            throughputAnalysis=throughput_analysis,
+            xChart=x_chart_data,
+            mrChart=mr_chart_data,
+            signals=signals,
+            limits=limits,
+            baselinePeriod=baseline_period,
+            recommendations=recommendations
+        )
+        
+        logger.info("Throughput calculation completed successfully")
+        return response_data
+        
+    except HTTPException:
+        raise
+    except ValueError as e:
+        logger.error(f"Validation error: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Unexpected error during throughput calculation: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Internal calculation error: {str(e)}"
+        )
 
 @router.post("/calculate-pbc", response_model=PBCResponse)
 async def calculate_pbc(request: PBCRequest):
@@ -18,6 +138,16 @@ async def calculate_pbc(request: PBCRequest):
     logger.info(f"Received PBC request with {len(request.data)} data points")
     logger.info(f"Baseline period requested: {request.baselinePeriod}")
     logger.info(f"Detection rules: {request.detectionRules}")
+    
+    # If this is throughput data, redirect to throughput endpoint
+    if getattr(request, 'metricType', 'cycle_time') == 'throughput':
+        throughput_request = ThroughputRequest(
+            data=request.data,
+            period=ThroughputPeriod.WEEKLY,  # Default to weekly
+            baselinePeriod=request.baselinePeriod,
+            detectionRules=request.detectionRules
+        )
+        return await calculate_throughput(throughput_request)
     
     try:
         # Validate minimum data points
@@ -178,7 +308,13 @@ async def calculate_pbc(request: PBCRequest):
                     "timestamp": timestamps[i]
                 }
                 for i in range(len(values))
-            ]
+            ],
+            # Add flow metrics context
+            "flowMetricsContext": {
+                "metricType": "cycle_time",
+                "analysisGuidance": get_flow_metrics_guidance("cycle_time", signals),
+                "vacanti_insights": generate_vacanti_insights(values, limits, signals)
+            }
         }
         
         logger.info("PBC calculation completed successfully with task information")
@@ -204,6 +340,56 @@ async def calculate_pbc(request: PBCRequest):
             detail=f"Internal calculation error: {str(e)}"
         )
 
+def get_flow_metrics_guidance(metric_type: str, signals: List[Signal]) -> dict:
+    """Provide guidance based on Vacanti's flow metrics methodology"""
+    
+    guidance = {
+        "cycle_time": {
+            "interpretation": "Cycle Time measures the elapsed time from when work starts until it's completed",
+            "signals_meaning": "Signals indicate changes in your delivery process that require investigation",
+            "action_items": [
+                "Investigate assignable causes for points outside Natural Process Limits",
+                "Look for process changes during signal periods",
+                "Consider workflow bottlenecks or capacity changes"
+            ]
+        },
+        "throughput": {
+            "interpretation": "Throughput measures the number of items completed per time period",
+            "signals_meaning": "Signals indicate changes in your team's delivery capacity",
+            "action_items": [
+                "Investigate capacity changes during signal periods",
+                "Look for team composition or process changes",
+                "Consider external factors affecting delivery rate"
+            ]
+        }
+    }
+    
+    return guidance.get(metric_type, guidance["cycle_time"])
+
+def generate_vacanti_insights(values: List[float], limits: ProcessLimits, signals: List[Signal]) -> dict:
+    """Generate insights based on Vacanti's predictability framework"""
+    
+    total_points = len(values)
+    signal_points = len(set().union(*[signal.dataPoints for signal in signals]))
+    predictability_ratio = 1 - (signal_points / total_points)
+    
+    if predictability_ratio >= 0.85:
+        predictability_assessment = "Highly Predictable"
+        recommendation = "Your process exhibits routine variation. Focus on continuous improvement."
+    elif predictability_ratio >= 0.70:
+        predictability_assessment = "Moderately Predictable" 
+        recommendation = "Some exceptional variation detected. Investigate assignable causes."
+    else:
+        predictability_assessment = "Unpredictable"
+        recommendation = "Significant exceptional variation. Process improvement needed before forecasting."
+    
+    return {
+        "predictability_ratio": round(predictability_ratio, 3),
+        "assessment": predictability_assessment,
+        "recommendation": recommendation,
+        "baseline_period_guidance": f"Using {len(values)} data points meets Vacanti's minimum 6-point requirement"
+    }
+
 @router.get("/health")
 async def health_check():
     """Health check endpoint with detailed status"""
@@ -212,16 +398,111 @@ async def health_check():
         test_data = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
         test_limits = test_calculator.calculate_natural_process_limits(test_data)
         
-        logger.info("Health check passed - calculator working correctly")
+        # Test throughput calculator
+        throughput_calculator = ThroughputCalculator()
+        test_throughput_data = [
+            DataPoint(timestamp=datetime.now(), value=1.0, label="Test 1"),
+            DataPoint(timestamp=datetime.now(), value=2.0, label="Test 2"),
+            DataPoint(timestamp=datetime.now(), value=3.0, label="Test 3")
+        ]
+        
+        logger.info("Health check passed - all calculators working correctly")
         return {
-            "status": "healthy", 
-            "message": "PBC API is running",
-            "calculator_test": "passed",
+            "status": "healthy",
+            "message": "PBC and Throughput APIs are running",
+            "pbc_test": "passed",
+            "throughput_test": "passed",
             "test_average": test_limits.average
         }
     except Exception as e:
         logger.error(f"Health check failed: {str(e)}")
         return {
             "status": "unhealthy",
-            "message": f"PBC API health check failed: {str(e)}"
+            "message": f"API health check failed: {str(e)}"
+        }
+
+@router.get("/debug/test-calculation")
+async def test_calculation():
+    """Debug endpoint to test PBC calculation with sample data"""
+    try:
+        # Sample data based on the document's methodology
+        sample_data = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]
+        
+        calculator = PBCCalculator()
+        limits = calculator.calculate_natural_process_limits(sample_data)
+        moving_ranges = calculator.calculate_moving_ranges(sample_data)
+        
+        return {
+            "sample_data": sample_data,
+            "limits": {
+                "average": limits.average,
+                "upperLimit": limits.upperLimit,
+                "lowerLimit": limits.lowerLimit,
+                "averageMovingRange": limits.averageMovingRange,
+                "upperRangeLimit": limits.upperRangeLimit
+            },
+            "moving_ranges": moving_ranges,
+            "calculation_status": "success"
+        }
+    except Exception as e:
+        logger.error(f"Test calculation failed: {str(e)}")
+        return {
+            "calculation_status": "failed",
+            "error": str(e)
+        }
+
+@router.get("/debug/test-throughput")
+async def test_throughput():
+    """Debug endpoint to test throughput calculation with sample data"""
+    try:
+        from datetime import timedelta
+        
+        # Sample throughput data - items completed over several weeks
+        base_date = datetime(2024, 1, 1)
+        sample_data = []
+        
+        # Week 1: 5 items
+        for i in range(5):
+            sample_data.append(DataPoint(
+                timestamp=base_date + timedelta(days=i),
+                value=1.0,  # Each item counts as 1
+                label=f"Item-W1-{i+1}"
+            ))
+        
+        # Week 2: 8 items
+        for i in range(8):
+            sample_data.append(DataPoint(
+                timestamp=base_date + timedelta(days=7+i),
+                value=1.0,
+                label=f"Item-W2-{i+1}"
+            ))
+        
+        # Week 3: 3 items
+        for i in range(3):
+            sample_data.append(DataPoint(
+                timestamp=base_date + timedelta(days=14+i),
+                value=1.0,
+                label=f"Item-W3-{i+1}"
+            ))
+        
+        throughput_calculator = ThroughputCalculator()
+        throughput_analysis = throughput_calculator.calculate_throughput_analysis(
+            sample_data, ThroughputPeriod.WEEKLY
+        )
+        
+        return {
+            "sample_data_count": len(sample_data),
+            "throughput_analysis": {
+                "totalPeriods": throughput_analysis.totalPeriods,
+                "averageThroughput": throughput_analysis.averageThroughput,
+                "medianThroughput": throughput_analysis.medianThroughput,
+                "predictabilityScore": throughput_analysis.predictabilityScore
+            },
+            "calculation_status": "success"
+        }
+    except Exception as e:
+        logger.error(f"Test throughput calculation failed: {str(e)}")
+        return {
+            "calculation_status": "failed",
+            "error": str(e)
         }

@@ -17,6 +17,7 @@ import { DataPoint } from '../../types';
 
 interface FileUploadProps {
   onDataChange: (data: DataPoint[]) => void;
+  metricType?: 'cycle_time' | 'throughput';
 }
 
 interface NaveDataPreview {
@@ -28,11 +29,11 @@ interface NaveDataPreview {
   duplicateTimestamps: number;
 }
 
-const FileUpload: React.FC<FileUploadProps> = ({ onDataChange }) => {
+const FileUpload: React.FC<FileUploadProps> = ({ onDataChange, metricType = 'cycle_time' }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<NaveDataPreview | null>(null);
-  const [metricType, setMetricType] = useState<'cycle_time' | 'throughput'>('cycle_time');
+  const [selectedMetricType, setSelectedMetricType] = useState<'cycle_time' | 'throughput'>(metricType);
 
   const parseNaveCSV = async (file: File): Promise<DataPoint[]> => {
     const text = await file.text();
@@ -52,7 +53,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onDataChange }) => {
       startDate: headers.findIndex(h => h.includes('start date')),
       endDate: headers.findIndex(h => h.includes('end date')),
       status: headers.findIndex(h => h.includes('status')),
-      resolution: headers.findIndex(h => h.includes('resolution')), // Add resolution column
+      resolution: headers.findIndex(h => h.includes('resolution')),
       // Nave provides detailed time tracking in minutes
       backlogTime: headers.findIndex(h => h.includes('backlog (mins)')),
       inProcessTime: headers.findIndex(h => h.includes('in process (mins)')),
@@ -64,7 +65,6 @@ const FileUpload: React.FC<FileUploadProps> = ({ onDataChange }) => {
       throw new Error('CSV must contain "Start date" and "End date" columns for flow metrics analysis');
     }
 
-    const data: DataPoint[] = [];
     const completedTasks: any[] = [];
     let filteredOutCount = 0;
     
@@ -115,38 +115,16 @@ const FileUpload: React.FC<FileUploadProps> = ({ onDataChange }) => {
           continue; // Skip invalid dates
         }
 
-        let value: number = 0; // Initialize value to avoid unassigned usage
-        
-        if (metricType === 'cycle_time') {
-          // Calculate Cycle Time in days (as recommended in Vacanti's document)
-          const cycleTimeMs = endDate.getTime() - startDate.getTime();
-          value = cycleTimeMs / (1000 * 60 * 60 * 24); // Convert to days
-          
-          // Enhanced label with task key and name for tooltips
-          const enhancedLabel = `${taskKey}: ${taskName} (${value.toFixed(1)} days)`;
-          
-          // Use end date as the timestamp for when the measurement was taken
-          // Multiple items can complete on the same day - this is normal and allowed per Vacanti
-          data.push({
-            timestamp: endDate,
-            value: Math.round(value * 100) / 100, // Round to 2 decimal places
-            label: enhancedLabel,
-            // Add custom properties for tooltip enhancement
-            taskKey: taskKey,
-            taskName: taskName,
-            cycleTimeDays: value
-          } as DataPoint & { taskKey: string; taskName: string; cycleTimeDays: number });
-        } else {
-          // For throughput analysis, we'll count items completed per week
-          // This will be processed differently in a separate function
-        }
+        // Calculate cycle time for statistics (even for throughput analysis)
+        const cycleTimeMs = endDate.getTime() - startDate.getTime();
+        const cycleTimeDays = cycleTimeMs / (1000 * 60 * 60 * 24);
 
         completedTasks.push({
           taskKey,
           taskName,
           startDate,
           endDate,
-          cycleTime: value,
+          cycleTime: cycleTimeDays,
           status,
           resolution
         });
@@ -158,15 +136,39 @@ const FileUpload: React.FC<FileUploadProps> = ({ onDataChange }) => {
       }
     }
 
-    if (data.length === 0) {
+    if (completedTasks.length === 0) {
       throw new Error('No completed tasks found that meet the criteria. PBC analysis requires completed work items (Done status/resolution) with start and end dates.');
     }
 
     // Sort by completion date for proper time series analysis (Vacanti's requirement)
-    data.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+    completedTasks.sort((a, b) => a.endDate.getTime() - b.endDate.getTime());
 
-    // Calculate statistics including duplicate timestamps (which are allowed per Vacanti)
-    const cycleTimeValues = data.map(d => d.value);
+    let data: DataPoint[] = [];
+
+    if (selectedMetricType === 'cycle_time') {
+      // For cycle time analysis: each task becomes a data point with its cycle time
+      data = completedTasks.map((task, index) => ({
+        timestamp: task.endDate,
+        value: Math.round(task.cycleTime * 100) / 100, // Round to 2 decimal places
+        label: `${task.taskKey}: ${task.taskName} (${task.cycleTime.toFixed(1)} days)`,
+        taskKey: task.taskKey,
+        taskName: task.taskName,
+        cycleTimeDays: task.cycleTime
+      } as DataPoint & { taskKey: string; taskName: string; cycleTimeDays: number }));
+    } else {
+      // For throughput analysis: each completed item becomes a data point with value=1
+      // The backend will group these by time periods to calculate throughput
+      data = completedTasks.map((task, index) => ({
+        timestamp: task.endDate,
+        value: 1, // Each completed item counts as 1 for throughput calculation
+        label: `${task.taskKey}: ${task.taskName}`,
+        taskKey: task.taskKey,
+        taskName: task.taskName
+      } as DataPoint & { taskKey: string; taskName: string }));
+    }
+
+    // Calculate statistics for preview
+    const cycleTimeValues = completedTasks.map(t => t.cycleTime);
     const avgCycleTime = cycleTimeValues.reduce((sum, val) => sum + val, 0) / cycleTimeValues.length;
     
     // Count duplicate timestamps (for informational purposes)
@@ -211,8 +213,9 @@ const FileUpload: React.FC<FileUploadProps> = ({ onDataChange }) => {
       const pbcData = await parseNaveCSV(file);
       
       // Validate minimum data points for meaningful PBC analysis
-      if (pbcData.length < 6) {
-        throw new Error(`Only ${pbcData.length} completed tasks found that meet the criteria. Minimum 6 data points required for meaningful Process Behaviour Chart analysis as per Vacanti's methodology.`);
+      const minRequired = selectedMetricType === 'cycle_time' ? 6 : 10;
+      if (pbcData.length < minRequired) {
+        throw new Error(`Only ${pbcData.length} completed tasks found that meet the criteria. Minimum ${minRequired} data points required for meaningful ${selectedMetricType === 'cycle_time' ? 'Cycle Time' : 'Throughput'} analysis as per Vacanti's methodology.`);
       }
 
       onDataChange(pbcData);
@@ -240,14 +243,14 @@ const FileUpload: React.FC<FileUploadProps> = ({ onDataChange }) => {
       <FormControl fullWidth sx={{ mb: 2 }}>
         <InputLabel>Flow Metric to Analyze</InputLabel>
         <Select
-          value={metricType}
-          onChange={(e) => setMetricType(e.target.value as 'cycle_time' | 'throughput')}
+          value={selectedMetricType}
+          onChange={(e) => setSelectedMetricType(e.target.value as 'cycle_time' | 'throughput')}
         >
           <MenuItem value="cycle_time">
             Cycle Time (Days) - Time from start to completion
           </MenuItem>
           <MenuItem value="throughput">
-            Throughput (Items/Week) - Items completed per time period
+            Throughput (Items/Period) - Items completed per time period
           </MenuItem>
         </Select>
       </FormControl>
@@ -273,7 +276,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onDataChange }) => {
         <Box sx={{ mb: 2 }}>
           <LinearProgress />
           <Typography variant="body2" sx={{ mt: 1 }}>
-            Processing Nave data for flow metrics analysis...
+            Processing Nave data for {selectedMetricType === 'cycle_time' ? 'cycle time' : 'throughput'} analysis...
           </Typography>
         </Box>
       )}
@@ -291,16 +294,23 @@ const FileUpload: React.FC<FileUploadProps> = ({ onDataChange }) => {
         <Alert severity="success" sx={{ mb: 2 }}>
           <Typography variant="subtitle2" gutterBottom>
             <Assessment sx={{ mr: 1, verticalAlign: 'middle' }} />
-            Nave Data Successfully Processed
+            Nave Data Successfully Processed for {selectedMetricType === 'cycle_time' ? 'Cycle Time' : 'Throughput'} Analysis
           </Typography>
           
           <Stack direction="row" spacing={1} sx={{ mb: 1, flexWrap: 'wrap' }}>
             <Chip label={`${preview.completedTasks} completed tasks included`} size="small" color="success" />
             <Chip label={`${preview.filteredOutTasks} tasks filtered out`} size="small" color="info" />
-            <Chip 
-              label={`Avg ${metricType === 'cycle_time' ? 'Cycle Time' : 'Throughput'}: ${preview.avgCycleTime.toFixed(1)} ${metricType === 'cycle_time' ? 'days' : 'items/week'}`} 
-              size="small" 
-            />
+            {selectedMetricType === 'cycle_time' ? (
+              <Chip 
+                label={`Avg Cycle Time: ${preview.avgCycleTime.toFixed(1)} days`} 
+                size="small" 
+              />
+            ) : (
+              <Chip 
+                label={`${preview.completedTasks} items for throughput calculation`} 
+                size="small" 
+              />
+            )}
             {preview.duplicateTimestamps > 0 && (
               <Chip 
                 label={`${preview.duplicateTimestamps} items completed on same day`} 
@@ -315,27 +325,33 @@ const FileUpload: React.FC<FileUploadProps> = ({ onDataChange }) => {
           </Typography>
           
           <Typography variant="body2" sx={{ mt: 1 }}>
-            Ready for Process Behaviour Chart analysis. Data is chronologically ordered and meets 
-            Vacanti's requirements for meaningful XmR chart analysis.
+            Ready for {selectedMetricType === 'cycle_time' ? 'Cycle Time' : 'Throughput'} Process Behaviour Chart analysis. 
+            Data is chronologically ordered and meets Vacanti's requirements for meaningful XmR chart analysis.
           </Typography>
           
-          <Typography variant="body2" sx={{ mt: 1, fontStyle: 'italic' }}>
-            Filtered out: "Won't fix" status and non-"Done" resolutions as per your requirements.
-          </Typography>
+          {selectedMetricType === 'throughput' && (
+            <Typography variant="body2" sx={{ mt: 1, fontStyle: 'italic' }}>
+              For throughput analysis, each completed item will be grouped by time periods to calculate items completed per period.
+            </Typography>
+          )}
         </Alert>
       )}
 
       {/* Enhanced help text */}
       <Box sx={{ mt: 2, p: 2, bgcolor: 'grey.50', borderRadius: 1 }}>
         <Typography variant="subtitle2" gutterBottom>
-          Filtering Rules Applied:
+          {selectedMetricType === 'cycle_time' ? 'Cycle Time Analysis' : 'Throughput Analysis'} - Filtering Rules Applied:
         </Typography>
         <Typography variant="body2" component="ul" sx={{ pl: 2 }}>
           <li>✅ Include: Tasks with "Done" status or "Done" resolution</li>
           <li>❌ Exclude: Tasks with "Won't fix" status</li>
           <li>❌ Exclude: Tasks with non-"Done" resolutions</li>
           <li>❌ Exclude: Tasks without completion dates</li>
-          <li>📊 Result: Only completed work items for accurate flow metrics</li>
+          {selectedMetricType === 'cycle_time' ? (
+            <li>📊 Result: Each task becomes a data point with its cycle time in days</li>
+          ) : (
+            <li>📊 Result: Each completed item (value=1) will be grouped by time periods for throughput calculation</li>
+          )}
           <li>🎯 Hover over chart points to see Task Key and Task Name</li>
         </Typography>
       </Box>
