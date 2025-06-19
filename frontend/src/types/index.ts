@@ -2,10 +2,55 @@ export interface DataPoint {
   timestamp: Date;
   value: number;
   label?: string;
-  // Enhanced properties for Nave integration
   taskKey?: string;
   taskName?: string;
   cycleTimeDays?: number;
+}
+
+// New Dynamic Baseline Types
+export type BaselineStability = 'stable' | 'unstable' | 'improving' | 'degrading';
+export type SeasonalPattern = 'none' | 'weekly' | 'monthly' | 'quarterly';
+
+export interface BaselineRecommendation {
+  recommendedPeriod: number;
+  currentPeriod: number;
+  confidence: number;
+  reasoning: string[];
+  stability: BaselineStability;
+  seasonalPattern: SeasonalPattern;
+  shouldRecalculate: boolean;
+  lastRecalculationDate?: Date;
+}
+
+export interface DynamicBaselineAnalysis {
+  recommendation: BaselineRecommendation;
+  dataStabilityScore: number;
+  processChangePoints: number[];
+  seasonalityAnalysis: {
+    dominant_pattern: SeasonalPattern;
+    weekly_strength: number;
+    monthly_strength: number;
+    patterns_detected: string[];
+  };
+  signalDensity: number;
+  variationTrend: 'increasing' | 'decreasing' | 'stable';
+}
+
+export interface DynamicBaselineResponse {
+  analysis: DynamicBaselineAnalysis;
+  alternativeBaselines: Array<{
+    period: number;
+    metrics: {
+      signal_count: number;
+      signal_density: number;
+      limit_precision: number;
+      baseline_stability: number;
+      upper_limit: number;
+      lower_limit: number;
+      average: number;
+    };
+  }>;
+  historicalPerformance: Record<string, number>;
 }
 
 export interface ProcessLimits {
@@ -61,9 +106,11 @@ export interface ChartConfiguration {
   showSigmaLines: boolean;
   detectionRules: string[];
   timeFormat: string;
-  // Enhanced for throughput
   metricType: 'cycle_time' | 'throughput';
   throughputPeriod: ThroughputPeriod;
+  // Enhanced for dynamic baseline
+  enableDynamicBaseline: boolean;
+  autoRecalculate: boolean;
 }
 
 export interface SigmaLines {

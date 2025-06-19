@@ -3,15 +3,37 @@ from .data_models import (
     DetectionRuleType,
     Signal,
     ProcessLimits,
+    ThroughputPeriod,
+    ThroughputDataPoint,
+    ThroughputAnalysis,
+    BaselineStability,
+    SeasonalPattern,
+    BaselineRecommendation,
+    DynamicBaselineAnalysis,
     PBCRequest,
-    PBCResponse
+    PBCResponse,
+    ThroughputRequest,
+    ThroughputResponse,
+    DynamicBaselineRequest,
+    DynamicBaselineResponse
 )
 
 __all__ = [
     'DataPoint',
-    'DetectionRuleType', 
+    'DetectionRuleType',
     'Signal',
     'ProcessLimits',
+    'ThroughputPeriod',
+    'ThroughputDataPoint',
+    'ThroughputAnalysis',
+    'BaselineStability',
+    'SeasonalPattern',
+    'BaselineRecommendation',
+    'DynamicBaselineAnalysis',
     'PBCRequest',
-    'PBCResponse'
+    'PBCResponse',
+    'ThroughputRequest',
+    'ThroughputResponse',
+    'DynamicBaselineRequest',
+    'DynamicBaselineResponse'
 ]

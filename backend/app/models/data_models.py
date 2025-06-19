@@ -3,7 +3,7 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime
 from enum import Enum
 
-# Existing models...
+# Basic models
 class DataPoint(BaseModel):
     timestamp: datetime
     value: float
@@ -28,7 +28,31 @@ class ProcessLimits(BaseModel):
     averageMovingRange: float
     upperRangeLimit: float
 
-# New Dynamic Baseline Models
+# Throughput models
+class ThroughputPeriod(str, Enum):
+    DAILY = "daily"
+    WEEKLY = "weekly"
+    MONTHLY = "monthly"
+
+class ThroughputDataPoint(BaseModel):
+    periodStart: datetime
+    periodEnd: datetime
+    itemCount: int
+    itemsCompleted: List[str]
+    period: ThroughputPeriod
+
+class ThroughputAnalysis(BaseModel):
+    throughputData: List[ThroughputDataPoint]
+    averageThroughput: float
+    medianThroughput: float
+    minThroughput: int
+    maxThroughput: int
+    period: ThroughputPeriod
+    totalPeriods: int
+    totalItemsCompleted: int
+    predictabilityScore: float
+
+# Dynamic Baseline models
 class BaselineStability(str, Enum):
     STABLE = "stable"
     UNSTABLE = "unstable"
@@ -58,6 +82,37 @@ class DynamicBaselineAnalysis(BaseModel):
     seasonalityAnalysis: Dict[str, Any]
     signalDensity: float  # Signals per data point
     variationTrend: str  # "increasing", "decreasing", "stable"
+
+# Request/Response models
+class PBCRequest(BaseModel):
+    data: List[DataPoint]
+    baselinePeriod: Optional[int] = Field(default=20, ge=3, le=50)
+    detectionRules: List[DetectionRuleType] = [DetectionRuleType.RULE1, DetectionRuleType.RULE4]
+    metricType: Optional[str] = "cycle_time"
+
+class PBCResponse(BaseModel):
+    xChart: Dict[str, Any]
+    mrChart: Dict[str, Any]
+    signals: List[Signal]
+    limits: ProcessLimits
+    baselinePeriod: int
+    # Enhanced for throughput support
+    throughputAnalysis: Optional[ThroughputAnalysis] = None
+
+class ThroughputRequest(BaseModel):
+    data: List[DataPoint]
+    period: ThroughputPeriod = ThroughputPeriod.WEEKLY
+    baselinePeriod: Optional[int] = Field(default=20, ge=3, le=50)
+    detectionRules: List[DetectionRuleType] = [DetectionRuleType.RULE1, DetectionRuleType.RULE4]
+
+class ThroughputResponse(BaseModel):
+    throughputAnalysis: ThroughputAnalysis
+    xChart: Dict[str, Any]
+    mrChart: Dict[str, Any]
+    signals: List[Signal]
+    limits: ProcessLimits
+    baselinePeriod: int
+    recommendations: List[str]
 
 class DynamicBaselineRequest(BaseModel):
     data: List[DataPoint]

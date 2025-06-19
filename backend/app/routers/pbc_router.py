@@ -4,17 +4,98 @@ import logging
 from datetime import datetime
 from app.models.data_models import (
     PBCRequest, PBCResponse, DataPoint, Signal, ProcessLimits,
-    ThroughputRequest, ThroughputResponse, ThroughputPeriod
+    ThroughputRequest, ThroughputResponse, ThroughputPeriod,
+    DynamicBaselineRequest, DynamicBaselineResponse
 )
 from app.services.pbc_calculator import PBCCalculator
 from app.services.signal_detector import SignalDetector
 from app.services.throughput_calculator import ThroughputCalculator
+from app.services.dynamic_baseline_calculator import DynamicBaselineCalculator
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["pbc"])
+
+@router.post("/analyze-dynamic-baseline", response_model=DynamicBaselineResponse)
+async def analyze_dynamic_baseline(request: DynamicBaselineRequest):
+    """
+    Analyze data to recommend optimal baseline period based on:
+    - Data stability (signal frequency and variation patterns)
+    - Process changes (detected through signal analysis)  
+    - Seasonal patterns (recurring cycles in data)
+    
+    Implements Vacanti's methodology for baseline period optimization.
+    """
+    logger.info(f"Received dynamic baseline request with {len(request.data)} data points")
+    logger.info(f"Current baseline: {request.currentBaselinePeriod}, Metric: {request.metricType}")
+    
+    try:
+        # Validate minimum data points
+        if len(request.data) < request.minimumPeriod:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Minimum {request.minimumPeriod} data points required for baseline analysis"
+            )
+        
+        # Initialize dynamic baseline calculator
+        baseline_calculator = DynamicBaselineCalculator()
+        
+        # Perform dynamic baseline analysis
+        analysis = baseline_calculator.analyze_dynamic_baseline(
+            request.data,
+            request.currentBaselinePeriod,
+            request.metricType
+        )
+        
+        logger.info(f"Dynamic baseline analysis completed:")
+        logger.info(f"  Recommended period: {analysis.recommendation.recommendedPeriod}")
+        logger.info(f"  Confidence: {analysis.recommendation.confidence:.2f}")
+        logger.info(f"  Stability: {analysis.recommendation.stability}")
+        logger.info(f"  Should recalculate: {analysis.recommendation.shouldRecalculate}")
+        
+        # Evaluate alternative baseline periods
+        periods_to_test = list(range(
+            request.minimumPeriod,
+            min(request.maximumPeriod + 1, len(request.data) + 1)
+        ))
+        
+        alternative_baselines = baseline_calculator.evaluate_alternative_baselines(
+            request.data, periods_to_test
+        )
+        
+        # Calculate historical performance metrics
+        historical_performance = {}
+        for period, metrics in alternative_baselines.items():
+            historical_performance[str(period)] = metrics["baseline_stability"]
+        
+        response_data = DynamicBaselineResponse(
+            analysis=analysis,
+            alternativeBaselines=[
+                {
+                    "period": period,
+                    "metrics": metrics
+                }
+                for period, metrics in alternative_baselines.items()
+            ],
+            historicalPerformance=historical_performance
+        )
+        
+        logger.info("Dynamic baseline analysis completed successfully")
+        return response_data
+        
+    except HTTPException:
+        raise
+    except ValueError as e:
+        logger.error(f"Validation error: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Unexpected error during dynamic baseline analysis: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Internal analysis error: {str(e)}"
+        )
 
 @router.post("/calculate-throughput", response_model=ThroughputResponse)
 async def calculate_throughput(request: ThroughputRequest):
@@ -406,13 +487,25 @@ async def health_check():
             DataPoint(timestamp=datetime.now(), value=3.0, label="Test 3")
         ]
         
+                # Test dynamic baseline calculator
+        baseline_calculator = DynamicBaselineCalculator()
+        test_baseline_data = [
+            DataPoint(timestamp=datetime.now(), value=float(i), label=f"Test {i}")
+            for i in range(1, 13)  # 12 data points
+        ]
+        
+        baseline_analysis = baseline_calculator.analyze_dynamic_baseline(
+            test_baseline_data, 8, "cycle_time"
+        )
         logger.info("Health check passed - all calculators working correctly")
         return {
             "status": "healthy",
-            "message": "PBC and Throughput APIs are running",
+            "message": "PBC, Throughput, and Dynamic Baseline APIs are running",
             "pbc_test": "passed",
-            "throughput_test": "passed",
-            "test_average": test_limits.average
+            "throughput_test": "passed", 
+            "dynamic_baseline_test": "passed",
+            "test_average": test_limits.average,
+            "test_baseline_recommendation": baseline_analysis.recommendation.recommendedPeriod
         }
     except Exception as e:
         logger.error(f"Health check failed: {str(e)}")

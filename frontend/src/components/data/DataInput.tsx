@@ -21,6 +21,7 @@ import {
 import { DataPoint, ChartConfiguration, ThroughputPeriod } from '../../types';
 import FileUpload from './FileUpload';
 import ManualInput from './ManualInput';
+import DynamicBaseline from '../analysis/DynamicBaseline';
 
 interface DataInputProps {
   onDataSubmit: (data: DataPoint[], config: ChartConfiguration) => void;
@@ -31,13 +32,17 @@ const DataInput: React.FC<DataInputProps> = ({ onDataSubmit, loading }) => {
   const [tabValue, setTabValue] = useState(0);
   const [data, setData] = useState<DataPoint[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [showDynamicBaseline, setShowDynamicBaseline] = useState(false);
   const [config, setConfig] = useState<ChartConfiguration>({
     baselinePeriod: 20,
     showSigmaLines: false,
     detectionRules: ['rule1', 'rule4'],
     timeFormat: 'MM/dd/yyyy',
     metricType: 'cycle_time',
-    throughputPeriod: 'weekly' as ThroughputPeriod
+    throughputPeriod: 'weekly' as ThroughputPeriod,
+    // Enhanced for dynamic baseline
+    enableDynamicBaseline: false,
+    autoRecalculate: false
   });
 
   const handleTabChange = (event: React.SyntheticEvent, newValue: number) => {
@@ -234,6 +239,33 @@ const DataInput: React.FC<DataInputProps> = ({ onDataSubmit, loading }) => {
               label="Show Sigma Lines"
             />
           </Grid>
+
+          {/* Dynamic Baseline Configuration */}
+          <Grid item xs={12} sm={6} md={3}>
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={config.enableDynamicBaseline}
+                  onChange={(e) => handleConfigChange('enableDynamicBaseline', e.target.checked)}
+                />
+              }
+              label="Enable Dynamic Baseline"
+            />
+          </Grid>
+
+          {config.enableDynamicBaseline && (
+            <Grid item xs={12} sm={6} md={3}>
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={config.autoRecalculate}
+                    onChange={(e) => handleConfigChange('autoRecalculate', e.target.checked)}
+                  />
+                }
+                label="Auto Recalculate"
+              />
+            </Grid>
+          )}
           
           <Grid item xs={12}>
             <Button
@@ -269,6 +301,13 @@ const DataInput: React.FC<DataInputProps> = ({ onDataSubmit, loading }) => {
                   size="small" 
                 />
               )}
+              {config.enableDynamicBaseline && (
+                <Chip 
+                  label="Dynamic Baseline Enabled" 
+                  color="success" 
+                  size="small" 
+                />
+              )}
             </Stack>
             
             <Typography variant="body2" color="textSecondary">
@@ -279,7 +318,23 @@ const DataInput: React.FC<DataInputProps> = ({ onDataSubmit, loading }) => {
             </Typography>
           </Box>
         )}
-        
+
+        {/* Dynamic Baseline Analysis Section */}
+        {config.enableDynamicBaseline && data.length >= 6 && (
+          <Box sx={{ mt: 3 }}>
+            <DynamicBaseline
+              data={data}
+              currentBaselinePeriod={config.baselinePeriod}
+              metricType={config.metricType}
+              onBaselineRecommendation={(newPeriod) => {
+                handleConfigChange('baselinePeriod', newPeriod);
+                setShowDynamicBaseline(false);
+              }}
+            />
+          </Box>
+        )}
+
+        {/* Enhanced Information Section */}
         <Box sx={{ mt: 2, p: 2, bgcolor: 'grey.50', borderRadius: 1 }}>
           <Typography variant="subtitle2" gutterBottom>
             Vacanti's Flow Metrics Methodology:
@@ -289,8 +344,25 @@ const DataInput: React.FC<DataInputProps> = ({ onDataSubmit, loading }) => {
             <li><strong>Throughput:</strong> Number of items completed per time period - measures delivery capacity</li>
             <li><strong>Process Behaviour Charts:</strong> Distinguish between routine variation (noise) and exceptional variation (signals)</li>
             <li><strong>Predictability:</strong> Stable processes enable reliable forecasting and planning</li>
+            {config.enableDynamicBaseline && (
+              <li><strong>Dynamic Baseline:</strong> Automatically recommends optimal baseline periods based on data stability, process changes, and seasonal patterns</li>
+            )}
           </Typography>
         </Box>
+
+        {/* Dynamic Baseline Information */}
+        {config.enableDynamicBaseline && (
+          <Alert severity="info" sx={{ mt: 2 }}>
+            <Typography variant="subtitle2" gutterBottom>
+              Dynamic Baseline Analysis Enabled
+            </Typography>
+            <Typography variant="body2">
+              The system will analyze your data for stability, process changes, and seasonal patterns to recommend 
+              optimal baseline periods. This follows Vacanti's guidance that baseline periods should be 6-20 data points 
+              and represent stable process behavior for meaningful analysis.
+            </Typography>
+          </Alert>
+        )}
       </Box>
     </Paper>
   );

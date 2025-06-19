@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { DataPoint, PBCAnalysis, ThroughputResponse, ThroughputPeriod } from '../types';
+import { DataPoint, PBCAnalysis, ThroughputResponse, ThroughputPeriod, DynamicBaselineResponse } from '../types';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
 
@@ -11,11 +11,20 @@ const api = axios.create({
   timeout: 30000,
 });
 
+
 export interface PBCRequest {
   data: DataPoint[];
   baselinePeriod?: number;
   detectionRules?: string[];
   metricType?: 'cycle_time' | 'throughput';
+}
+
+export interface DynamicBaselineRequest {
+  data: DataPoint[];
+  currentBaselinePeriod: number;
+  metricType: string;
+  minimumPeriod?: number;
+  maximumPeriod?: number;
 }
 
 export interface ThroughputRequest {
@@ -98,6 +107,44 @@ export const calculateThroughput = async (request: ThroughputRequest): Promise<T
       throw new Error('Server error during throughput calculation.');
     } else {
       throw new Error(`Failed to calculate throughput: ${error.message}`);
+    }
+  }
+};
+
+export const analyzeDynamicBaseline = async (request: DynamicBaselineRequest): Promise<DynamicBaselineResponse> => {
+  try {
+    console.log('Sending dynamic baseline request:', request);
+    
+    const formattedData = request.data.map(point => ({
+      timestamp: point.timestamp.toISOString(),
+      value: Number(point.value),
+      label: point.label || ''
+    }));
+
+    const payload = {
+      data: formattedData,
+      currentBaselinePeriod: request.currentBaselinePeriod,
+      metricType: request.metricType,
+      minimumPeriod: request.minimumPeriod || 6,
+      maximumPeriod: request.maximumPeriod || 20
+    };
+
+    console.log('Dynamic baseline payload:', payload);
+    
+    const response = await api.post('/api/analyze-dynamic-baseline', payload);
+    
+    console.log('Dynamic baseline response:', response.data);
+    return response.data;
+    
+  } catch (error: any) {
+    console.error('Dynamic baseline analysis error:', error);
+    
+    if (error.response?.status === 400) {
+      throw new Error(error.response.data.detail || 'Invalid data provided for baseline analysis');
+    } else if (error.response?.status === 500) {
+      throw new Error('Server error during baseline analysis.');
+    } else {
+      throw new Error(`Failed to analyze dynamic baseline: ${error.message}`);
     }
   }
 };
